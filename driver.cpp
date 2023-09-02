@@ -7,38 +7,30 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 #include <iostream>
+#include <sstream>
+#include <fstream>
 
 int main() {
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
 	//std::cout << dev->maxThreadgroupMemoryLength() << "\n";
 	MTL::CommandQueue* cmd_queue = dev->newCommandQueue();
 	
-	int mat_size = 50;
+	int mat_size = 5;
 	int total_el_size = mat_size * mat_size;
 	
 	float buffer_cpu[total_el_size]; 
 
 	for(int i = 0; i < total_el_size; i++) {
-		buffer_cpu[i] = i;
+		buffer_cpu[i] = (i);
 	}
 
-
-	const char* str = R"(
-		
-
-kernel void mat_mul(const device float* mat1 [[buffer(0)]], const device float* mat2 [[buffer(1)]], device float* out [[buffer(2)]], uint2 gid [[thread_position_in_grid]]) {
-	float total = 0;
-	int i = gid.y;
-	int j = gid.x;
-	int ROW_SIZE = 50;
-	for(int k = 0; k < ROW_SIZE; k++) {
-		total += mat1[ROW_SIZE * k + i] * mat2[j* ROW_SIZE + k];
-	}
-
-	out[j*ROW_SIZE + i] = total;
-
-}
-	)";
+        std::ifstream shader_file("flash.metal");
+        std::stringstream text_buffer;
+        text_buffer << shader_file.rdbuf();
+	
+	std::string temp_str = text_buffer.str();
+        const char* str = temp_str.c_str();
+	
 
 	NS::Error* err = nullptr;
 	MTL::Library* library= dev->newLibrary(NS::String::string(str, NS::UTF8StringEncoding), nullptr, &err);//newLibrary(NS::String::string("flash", NS::UTF8StringEncoding), nullptr, &err);
@@ -75,8 +67,8 @@ kernel void mat_mul(const device float* mat1 [[buffer(0)]], const device float* 
 	threads_threadgroup.width = 1;
 	threads_threadgroup.depth = 1;
 
-	threadgroup_per_grid.height = 50;
-	threadgroup_per_grid.width  = 50;
+	threadgroup_per_grid.height = 5;
+	threadgroup_per_grid.width  = 5;
 	threadgroup_per_grid.depth = 1;
 
 	
