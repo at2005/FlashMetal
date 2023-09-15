@@ -90,14 +90,15 @@ int main() {
 	}
 
 
-/*
 
+
+	int shape_arr[2] = {6,6};
 	unsigned int n_embed = 6;
 	unsigned int N_seq = 6;
 	int total_el_size = N_seq * n_embed; 
 
 	// load function from metal shader file
-	MTL::Function* kernelFunc = library->newFunction(NS::String::string("mat_mul", NS::UTF8StringEncoding));
+	MTL::Function* kernelFunc = library->newFunction(NS::String::string("attention", NS::UTF8StringEncoding));
 	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
 
 
@@ -115,28 +116,31 @@ int main() {
 	
 
 
-	
+		
 	// copying data into CPU buffer
 	float buffer_cpu[total_el_size]; 
 
 	for(int i = 0; i < total_el_size; i++) {
-		buffer_cpu[i] = i;
-		(float*)(buff_out->contents())[i] = 2.5f;
+		buffer_cpu[i] = i*0.2;
+//		(float*)(buff_out->contents())[i] = 2.5f;
 	}
 	
+
+	print_tensor(buffer_cpu, shape_arr, 2);
 
 	// copying CPU buffers into HBM memory buffer objects
 	memcpy(query->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
+//	memcpy(buff_out->contents(), buffer_cpu, total_el_size * sizeof(float));
 
-	// copying -inf to m_vals and 0 to l_vals:
+/*	// copying -inf to m_vals and 0 to l_vals:
 	for(int i = 0; i < N_seq; i++) {
 		(float*)(l_vals->contents())[i] = 0;
 		(float*)(m_vals->contents())[i] = -INFINITY;
 
 	}	
-
+*/
 
 	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
 	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();
@@ -150,19 +154,19 @@ int main() {
 	encoder->setBuffer(key, 0, 1);
 	encoder->setBuffer(value, 0, 2);
 	encoder->setBuffer(buff_out, 0, 3);
-	encoder->setBuffer(l_vals, 0, 4);
-	encoder->setBuffer(m_vals, 0, 5);
+//	encoder->setBuffer(l_vals, 0, 4);
+//	encoder->setBuffer(m_vals, 0, 5);
 
 	// setting threads and threadgroup sizes
 	MTL::Size threads_threadgroup; 
 	MTL::Size threadgroup_per_grid;
 
-	threads_threadgroup.height = 1;
-	threads_threadgroup.width = 1;
+	threads_threadgroup.height = 2;
+	threads_threadgroup.width = 2;
 	threads_threadgroup.depth = 1;
 
-	threadgroup_per_grid.height = 5;
-	threadgroup_per_grid.width  = 5;
+	threadgroup_per_grid.height = 3;
+	threadgroup_per_grid.width  = 3;
 	threadgroup_per_grid.depth = 1;
 
 	// perform computation	
@@ -176,12 +180,14 @@ int main() {
 
 	// print output contents (viz)
 	float* output_buffer = (float*)(buff_out->contents());
-	
+
+	print_tensor(output_buffer, shape_arr, 2);
+
 	// print out buffer values
 	for(int i = 0; i < total_el_size; i++) {
-		std::cout << output_buffer[i] << "\n";
+//		std::cout << output_buffer[i] << "\n";
 	}
-*/
+
 	dev->release();
 
 
