@@ -45,6 +45,7 @@ void print_tensor(float* buff, int* shape, unsigned int num_dim) {
 	// strategy: print in reverse dimensions
 	
 	int prod_arr[num_dim];
+	// here we create a product array where we store the cumulative product for the following elements of each element
 	create_prod_arr(shape, num_dim, prod_arr, num_dim-1);
 
 	int total_elements = prod_arr[0];
@@ -59,7 +60,6 @@ void print_tensor(float* buff, int* shape, unsigned int num_dim) {
 		}
 	}
 
-
 }
 
 
@@ -70,16 +70,12 @@ int main() {
 	
 	// print out GPU metadata
 	std::cout << "MAX THREADGROUP MEMORY: " << dev->maxThreadgroupMemoryLength() << "\n";
-//	std::cout << dev->recommendedMaxWorkingSetSize() << "\n";
 	// create command queue where we will dispatch our jobs
 	MTL::CommandQueue* cmd_queue = dev->newCommandQueue();
 
 	std::string temp_file = ReadMetalFile();
 	const char* str = temp_file.c_str();
-
-//	std::cout << str << "\n";
 	
-	// copy-pasted error-handling code, too bored to write it :)
 	NS::Error* err = nullptr;
 	MTL::Library* library= dev->newLibrary(NS::String::string(str, NS::UTF8StringEncoding), nullptr, &err);//newLibrary(NS::String::string("flash", NS::UTF8StringEncoding), nullptr, &err);
 
@@ -90,12 +86,20 @@ int main() {
 	}
 
 
+	// PARAMETERS
+
+	const unsigned int n_embed = 128;
+	const unsigned int N_seq = 64;
+	int shape_arr[2] = {N_seq, n_embed};
+	unsigned int total_el_size = N_seq * n_embed; 
+	
+	// split into 16 blocks of size 4 each
+	unsigned int Q_BLOCK_SIZE = 4; 
+	unsigned int K_BLOCK_SIZE = 4;
+	
 
 
-	int shape_arr[2] = {6,6};
-	unsigned int n_embed = 6;
-	unsigned int N_seq = 6;
-	int total_el_size = N_seq * n_embed; 
+	// PARAMETERS END
 
 	// load function from metal shader file
 	MTL::Function* kernelFunc = library->newFunction(NS::String::string("attention", NS::UTF8StringEncoding));
@@ -114,15 +118,11 @@ int main() {
 	// Output, shape = (N_seq, n_embed)	
 	MTL::Buffer* buff_out = dev->newBuffer(total_el_size, MTL::ResourceStorageModeShared);
 	
-
-
-		
 	// copying data into CPU buffer
 	float buffer_cpu[total_el_size]; 
 
 	for(int i = 0; i < total_el_size; i++) {
-		buffer_cpu[i] = i*0.2;
-//		(float*)(buff_out->contents())[i] = 2.5f;
+		buffer_cpu[i] = 0.2 * i;
 	}
 	
 
@@ -141,15 +141,15 @@ int main() {
 
 	}	
 */
-
+	
+	
+	// command queue and command buffer are where we send our jobs
 	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
 	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();
 	MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
-	
-
 	encoder->setComputePipelineState(pipeline);
 
-
+	// set our buffer arguments
 	encoder->setBuffer(query, 0, 0);
 	encoder->setBuffer(key, 0, 1);
 	encoder->setBuffer(value, 0, 2);
@@ -158,15 +158,18 @@ int main() {
 //	encoder->setBuffer(m_vals, 0, 5);
 
 	// setting threads and threadgroup sizes
+
+	// Sets up shape of grid... current shape is just 2D
 	MTL::Size threads_threadgroup; 
 	MTL::Size threadgroup_per_grid;
 
-	threads_threadgroup.height = 2;
-	threads_threadgroup.width = 2;
+	threads_threadgroup.height = N_seq / Q_BLOCK_SIZE;
+	threads_threadgroup.width = 1;
 	threads_threadgroup.depth = 1;
 
-	threadgroup_per_grid.height = 3;
-	threadgroup_per_grid.width  = 3;
+	// for now batch size and head-size is 1
+	threadgroup_per_grid.height = 1;
+	threadgroup_per_grid.width  = 1;
 	threadgroup_per_grid.depth = 1;
 
 	// perform computation	

@@ -26,7 +26,12 @@ kernel void attention(const device float* query[[buffer(0)]], const device float
 	
 	// SRAM holds both key and query 
 	const unsigned int sram_len = 2 * ROW_SIZE * BLOCK_SIZE;
-	threadgroup float SRAM[100];
+	threadgroup float SRAM_Q[100];
+	threadgroup float SRAM_K[100];
+	threadgroup float SRAM_V[100];
+	threadgroup float SRAM_O[100];
+	
+
 	unsigned int offset_block = ROW_SIZE * BLOCK_SIZE;	
 
 	unsigned int abs_tid = tid.x * BLOCK_SIZE + tid.y;
@@ -37,8 +42,9 @@ kernel void attention(const device float* query[[buffer(0)]], const device float
 	// initial partial transfer to SRAM
 	for(int k = 0; k < elements_to_copy; k++) {
 		unsigned int temp_ind = (abs_tid * elements_to_copy) + k;
-		SRAM[temp_ind] = query[offset_gblock_x + temp_ind];
-		SRAM[offset_block + temp_ind] = key[offset_gblock_y + temp_ind];
+		SRAM_Q[temp_ind] = query[offset_gblock_x + temp_ind];
+		SRAM_K[temp_ind] = key[offset_gblock_y + temp_ind];
+		SRAM_V[temp_ind] = value[offset_glock_y + temp_ind];
 	}
 
 	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
@@ -53,10 +59,15 @@ kernel void attention(const device float* query[[buffer(0)]], const device float
 	float total = 0;
 	
 	for(int j = 0; j < ROW_SIZE; j++) {
-		total += SRAM[tid.x * ROW_SIZE + j] * SRAM[offset_block + (tid.y * ROW_SIZE + j)];	
+		total += SRAM_Q[tid.x * ROW_SIZE + j] * SRAM_K[tid.y * ROW_SIZE + j];	
 	}
+		
+	
 
-        out[gid.x*ROW_SIZE + gid.y] = total; 
+        out[gid.x*ROW_SIZE + gid.y] = metal::exp(total); 
 	
 
 }
+
+
+
