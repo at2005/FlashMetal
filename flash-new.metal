@@ -12,11 +12,15 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	const unsigned int embed_dim = 32;
 	const unsigned int seq_len = 64;
 	const unsigned int num_keys = seq_len / key_size;
-	
+
+
 	//  stored in SRAM
 	threadgroup float KEY_SRAM[seq_len * embed_dim]; 
 	threadgroup float VALUE_SRAM[seq_len * embed_dim];
 	threadgroup float QUERY_SRAM[seq_len * embed_dim];
+	
+	float dim_factor = 1.0;//metal::sqrt(embed_dim);
+
 
 	// copy all keys and values to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
@@ -32,10 +36,14 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	// iterate over each key block and compute attention scores
 	for(int k = 0; k < num_keys; k++) {
+		float OUTPUT_SRAM[query_size * key_size];
 		// do matmul -- outer loop is each row in Q-block
 		for(int i = 0; i < query_size; i++) {
 			// inner loop is each row in K-block. Should be column but it's transposed
 			for(int j = 0; j < key_size; j++) {
+				
+				// output matrix has materialised
+				
 				// compute dot product
 				float total_dot = 0.0;
 				for(int el = 0; el < embed_dim; el++) { 
@@ -47,13 +55,37 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 				
 				// each query vector adds another row to the output attention scores
 				
-				out[(tid.y * query_size * seq_len) + (i*seq_len) + (k*key_size) + j] = total_dot;//metal::exp(total_dot / 200);
+				OUTPUT_SRAM[i*query_size + j] = total_dot / dim_factor;				
+					
+
+//				out[(tid.y * query_size * seq_len) + (i*seq_len) + (k*key_size) + j] = OUTPUT_SRAM[i*query_size + j];//metal::exp(total_dot / 200);
 
 				//out[tid.y] = query[embed_dim*seq_len - 1];//QUERY_SRAM[embed_dim * seq_len - 1];
 
 			}
 
 		}
+
+		
+		// computing value dot attention scores
+
+		// so, basically, iterate over each row in attention scores, for us that is reduced seq dimension
+		for(int att_row = 0; att_row < query_size; att_row++) {
+			// iterate over each column in value matrix
+			for(int val_col = 0; val_col < embed_dim; val_col++) {
+					
+				float val_dot = 0.0;
+				// dot prod computation
+				for(int el = 0; el < query_size; el++) {
+					val_dot += OUTPUT_SRAM[(att_row * query_size) + el] * VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
+				}
+				
+				out[(embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col] += val_dot;
+
+
+			}
+		}
+
 
 	}
 

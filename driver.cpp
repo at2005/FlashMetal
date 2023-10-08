@@ -119,8 +119,10 @@ int main() {
 //	MTL::Buffer* m_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared); 
 
 	// Output, shape = (N_seq, n_embed)	
-	MTL::Buffer* buff_out = dev->newBuffer(N_seq*N_seq*sizeof(float), MTL::ResourceStorageModeShared);
+	MTL::Buffer* buff_out = dev->newBuffer(N_seq*n_embed*sizeof(float), MTL::ResourceStorageModeShared);
 	
+
+
 	// copying data into CPU buffer
 	float buffer_cpu[total_el_size]; 
 
@@ -135,6 +137,13 @@ int main() {
 	memcpy(query->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
+	
+	for(int i = 0; i < total_el_size; i++) {
+		((float*)(buff_out->contents()))[i] = 0.0;  
+	}
+
+
+	
 //	memcpy(buff_out->contents(), buffer_cpu, total_el_size * sizeof(float));
 
 /*	// copying -inf to m_vals and 0 to l_vals:
@@ -187,7 +196,7 @@ int main() {
 	// print output contents (viz)
 	float* output_buffer = (float*)(buff_out->contents());
 	
-	int shape_arr_out[2] = {64, 64};
+	int shape_arr_out[2] = {N_seq, n_embed};
 
 	print_tensor(output_buffer, shape_arr_out, 2);
 
