@@ -13,7 +13,7 @@
 
 std::string ReadMetalFile() {
 	
-        std::ifstream shader_file("flash.metal");
+        std::ifstream shader_file("flash-new.metal");
         std::stringstream text_buffer;
         text_buffer << shader_file.rdbuf();
 	
@@ -44,6 +44,8 @@ void create_prod_arr(int* shape_arr, int arr_size, int* output_arr, int curr_ind
 void print_tensor(float* buff, int* shape, unsigned int num_dim) {
 	// strategy: print in reverse dimensions
 	
+		std::cout << std::fixed;
+		 std::cout << std::setprecision(2);
 	int prod_arr[num_dim];
 	// here we create a product array where we store the cumulative product for the following elements of each element
 	create_prod_arr(shape, num_dim, prod_arr, num_dim-1);
@@ -51,7 +53,8 @@ void print_tensor(float* buff, int* shape, unsigned int num_dim) {
 	int total_elements = prod_arr[0];
 
 	for(int j = 0; j < total_elements; j++) { 
-		printf("%f ", buff[j]); 
+		std::cout << buff[j] << " ";
+		//printf("%f ", round(buff[j])); 
 		for(int i = 0; i < num_dim; i++) {
 			if((j+1) % prod_arr[i] == 0) {
 				printf("\n");
@@ -88,7 +91,7 @@ int main() {
 
 	// PARAMETERS
 
-	const unsigned int n_embed = 128;
+	const unsigned int n_embed = 32;
 	const unsigned int N_seq = 64;
 	int shape_arr[2] = {N_seq, n_embed};
 	unsigned int total_el_size = N_seq * n_embed; 
@@ -107,26 +110,26 @@ int main() {
 
 
 	// attention buffers, ie Q,K,V, shape = (N_seq, n_embed)
-	MTL::Buffer* query= dev->newBuffer(total_el_size, MTL::ResourceStorageModeShared);
-	MTL::Buffer* key= dev->newBuffer(total_el_size, MTL::ResourceStorageModeShared);
-	MTL::Buffer* value= dev->newBuffer(total_el_size, MTL::ResourceStorageModeShared);
+	MTL::Buffer* query= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
+	MTL::Buffer* key= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
+	MTL::Buffer* value= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
 	
 	// ancillary buffers, shape = (N_seq)
-	MTL::Buffer* l_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared);
-	MTL::Buffer* m_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared); 
+//	MTL::Buffer* l_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared);
+//	MTL::Buffer* m_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared); 
 
 	// Output, shape = (N_seq, n_embed)	
-	MTL::Buffer* buff_out = dev->newBuffer(total_el_size, MTL::ResourceStorageModeShared);
+	MTL::Buffer* buff_out = dev->newBuffer(N_seq*N_seq*sizeof(float), MTL::ResourceStorageModeShared);
 	
 	// copying data into CPU buffer
 	float buffer_cpu[total_el_size]; 
 
 	for(int i = 0; i < total_el_size; i++) {
-		buffer_cpu[i] = 0.2 * i;
+		buffer_cpu[i] = 0.002 * i;
 	}
 	
 
-	print_tensor(buffer_cpu, shape_arr, 2);
+	//print_tensor(buffer_cpu, shape_arr, 2);
 
 	// copying CPU buffers into HBM memory buffer objects
 	memcpy(query->contents(), buffer_cpu, total_el_size * sizeof(float));
@@ -183,12 +186,14 @@ int main() {
 
 	// print output contents (viz)
 	float* output_buffer = (float*)(buff_out->contents());
+	
+	int shape_arr_out[2] = {64, 64};
 
-	print_tensor(output_buffer, shape_arr, 2);
+	print_tensor(output_buffer, shape_arr_out, 2);
 
 	// print out buffer values
 	for(int i = 0; i < total_el_size; i++) {
-//		std::cout << output_buffer[i] << "\n";
+//	std::cout << output_buffer[i] << "\n";
 	}
 
 	dev->release();

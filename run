@@ -1,0 +1,1 @@
+g++ -std=c++17 driver.cpp -I ~/metal-cpp -framework Foundation -framework QuartzCore -framework Metal; ./a.out

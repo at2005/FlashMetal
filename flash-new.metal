@@ -9,7 +9,7 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	const unsigned int query_size = 4;
 	const unsigned int key_size = 4;
-	const unsigned int embed_dim = 128;
+	const unsigned int embed_dim = 32;
 	const unsigned int seq_len = 64;
 	const unsigned int num_keys = seq_len / key_size;
 	
@@ -21,18 +21,17 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	// copy all keys and values to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
 	for(int k = 0; k < elements_to_copy; k++) {	
-		QUERY_SRAM[tid.y * elements_to_copy + k] = query[tid.y * elements_copy + k];		
-		KEY_SRAM[tid.y * elements_to_copy + k] = key[tid.y * elements_copy + k];		
-		VALUE_SRAM[tid.y * elements_to_copy + k] = value[tid.y * elements_copy + k];		
+		QUERY_SRAM[tid.y * elements_to_copy + k] = query[tid.y * elements_to_copy + k];		
+		KEY_SRAM[tid.y * elements_to_copy + k] = key[tid.y * elements_to_copy + k];		
+		VALUE_SRAM[tid.y * elements_to_copy + k] = value[tid.y * elements_to_copy + k];		
 		
 	}
 		
 	// ensure all threads finish copying before usage
 	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
-	// iterate over each key and compute attention scores
+	// iterate over each key block and compute attention scores
 	for(int k = 0; k < num_keys; k++) {
-
 		// do matmul -- outer loop is each row in Q-block
 		for(int i = 0; i < query_size; i++) {
 			// inner loop is each row in K-block. Should be column but it's transposed
@@ -43,11 +42,14 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 					// the logic here is that we first index the query into the particular block, then 
 					// into the particular row (by i), then get the particular element by adding the offset.
 					// for the key, we first index by k to isolate the block, then by j to get the row, and then by el.
-					total_dot += QUERY_SRAM[tid.y * embed_dim + (i*embed_dim) + el] * KEY_SRAM[k*embed_dim + (j*embed_dim) + el];
+					total_dot += QUERY_SRAM[(tid.y * query_size * embed_dim) + (i*embed_dim) + el] * KEY_SRAM[(k*key_size*embed_dim) + (j*embed_dim) + el];
 				}
 				
 				// each query vector adds another row to the output attention scores
-				out[tid.y * seq_len + (i*seq_len) + j] = total_dot;
+				
+				out[(tid.y * query_size * seq_len) + (i*seq_len) + (k*key_size) + j] = total_dot;//metal::exp(total_dot / 200);
+
+				//out[tid.y] = query[embed_dim*seq_len - 1];//QUERY_SRAM[embed_dim * seq_len - 1];
 
 			}
 
