@@ -44,8 +44,8 @@ void create_prod_arr(int* shape_arr, int arr_size, int* output_arr, int curr_ind
 void print_tensor(float* buff, int* shape, unsigned int num_dim) {
 	// strategy: print in reverse dimensions
 	
-		std::cout << std::fixed;
-		 std::cout << std::setprecision(2);
+	std::cout << std::fixed;
+	 std::cout << std::setprecision(4);
 	int prod_arr[num_dim];
 	// here we create a product array where we store the cumulative product for the following elements of each element
 	create_prod_arr(shape, num_dim, prod_arr, num_dim-1);
@@ -154,7 +154,7 @@ int main() {
 	}	
 */
 	
-	
+
 	// command queue and command buffer are where we send our jobs
 	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
 	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();

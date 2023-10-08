@@ -19,7 +19,7 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	threadgroup float VALUE_SRAM[seq_len * embed_dim];
 	threadgroup float QUERY_SRAM[seq_len * embed_dim];
 	
-	float dim_factor = 1.0;//metal::sqrt(embed_dim);
+	float dim_factor = metal::sqrt((float)embed_dim);
 
 
 	// copy all keys and values to SRAM
