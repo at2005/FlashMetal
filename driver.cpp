@@ -127,7 +127,7 @@ int main() {
 	float buffer_cpu[total_el_size]; 
 
 	for(int i = 0; i < total_el_size; i++) {
-		buffer_cpu[i] = 0.002 * i;
+		buffer_cpu[i] = 0.00002 * i;
 	}
 	
 

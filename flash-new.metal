@@ -34,6 +34,10 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	// ensure all threads finish copying before usage
 	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
+	float ROW_SUM[query_size];
+	for(int _ = 0; _ < query_size; _++) ROW_SUM[_] = 0.0; 
+	
+
 	// iterate over each key block and compute attention scores
 	for(int k = 0; k < num_keys; k++) {
 		float OUTPUT_SRAM[query_size * key_size];
@@ -55,17 +59,26 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 				
 				// each query vector adds another row to the output attention scores
 				
-				OUTPUT_SRAM[i*query_size + j] = total_dot / dim_factor;				
-					
-
-//				out[(tid.y * query_size * seq_len) + (i*seq_len) + (k*key_size) + j] = OUTPUT_SRAM[i*query_size + j];//metal::exp(total_dot / 200);
-
-				//out[tid.y] = query[embed_dim*seq_len - 1];//QUERY_SRAM[embed_dim * seq_len - 1];
+				OUTPUT_SRAM[i*query_size + j] = metal::exp(total_dot / dim_factor);				
 
 			}
 
 		}
 
+		
+		float ROW_SUM_NEW[query_size];
+
+		// calculating row_sums
+		for(int row_i = 0; row_i < query_size; row_i++) {
+			float row_sum_local = 0.0;	
+
+			for(int row_el = 0; row_el < key_size; row_el++) {
+				row_sum_local += OUTPUT_SRAM[row_i * query_size + row_el];	
+			}
+			
+			ROW_SUM_NEW[row_i] = row_sum_local;
+
+		}
 		
 		// computing value dot attention scores
 
@@ -73,17 +86,26 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 		for(int att_row = 0; att_row < query_size; att_row++) {
 			// iterate over each column in value matrix
 			for(int val_col = 0; val_col < embed_dim; val_col++) {
-					
 				float val_dot = 0.0;
 				// dot prod computation
 				for(int el = 0; el < query_size; el++) {
 					val_dot += OUTPUT_SRAM[(att_row * query_size) + el] * VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
 				}
-				
+					
+				// multiply to cancel out the previous incorrect row sums
+				out[(embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col] *= ROW_SUM[att_row];
+				// add new score value to SV dot product
 				out[(embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col] += val_dot;
+				// divide again for correct softmax
+				out[(embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col] /= (ROW_SUM[att_row] + ROW_SUM_NEW[att_row]);
 
 
 			}
+			
+			// update rowsum
+			ROW_SUM[att_row] += ROW_SUM_NEW[att_row];
+
+
 		}
 
 
