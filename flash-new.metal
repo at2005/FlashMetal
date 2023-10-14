@@ -51,9 +51,7 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 		for(int i = 0; i < query_size; i++) {
 			// inner loop is each row in K-block. Should be column but it's transposed
 			for(int j = 0; j < key_size; j++) {
-				
-				// output matrix has materialised
-				
+
 				// compute dot product
 				float total_dot = 0.0;
 				for(int el = 0; el < embed_dim; el++) { 
@@ -80,7 +78,16 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 			for(int row_el = 0; row_el < key_size; row_el++) {
 				size_t output_index = row_i * query_size + row_el;
+				if(tid.y * query_size + (row_i) < (k * key_size+ row_el)) {
+					OUTPUT_SRAM[output_index] = 0.0;
+				//	test[(tid.y * seq_len*query_size) + (row_i*seq_len) + (k * key_size+ row_el)] = 0.0; 
+					continue;
+				}
+				
+				//test[(tid.y * seq_len*query_size) + (row_i*seq_len) + (k * key_size+ row_el)] = OUTPUT_SRAM[output_index];
+
 				// compute exponent with stability
+//				if(OUTPUT_SRAM[output_index] == -INFINITY) OUTPUT_SRAM[output_index] = 0.0;
 				OUTPUT_SRAM[output_index] = metal::exp(OUTPUT_SRAM[output_index] - ROW_MAX_LOCAL[row_i]);
 				row_sum_local += OUTPUT_SRAM[output_index];	
 			}
@@ -91,7 +98,6 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 		
 		
 		// computing value dot attention scores
-
 		// so, basically, iterate over each row in attention scores, for us that is reduced seq dimension
 		for(int att_row = 0; att_row < query_size; att_row++) {
 			
@@ -101,20 +107,21 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 			// iterate over each column in value matrix
 			for(int val_col = 0; val_col < embed_dim; val_col++) {
+
+				size_t outmat_i = (embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col;
+
 				float val_dot = 0.0;
 				// dot prod computation
 				for(int el = 0; el < query_size; el++) {
 					val_dot += OUTPUT_SRAM[(att_row * query_size) + el] * VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
 				}
 				
-				size_t outmat_i = (embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col;
 				// multiply to cancel out the previous incorrect row sums
 				out[outmat_i] *= ROW_SUM[att_row];
 				// multiply by e^old_max to cancel and -e to include new max	
 				out[outmat_i] *= metal::exp(ROW_MAX[att_row] - rowmax_new);
 				// add new score value to SV dot product
 				out[outmat_i] += metal::exp(ROW_MAX_LOCAL[att_row] - rowmax_new) * val_dot;
-//				float rowsum_new = metal::exp(ROW_MAX[att_row]) * ROW_SUM[att_row]  * ROW_SUM_NEW[att_row];
 				out[outmat_i] /= sum_divisor;
 
 			}

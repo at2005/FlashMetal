@@ -10,6 +10,8 @@
 #include <sstream>
 #include <fstream>
 #include <math.h>
+#include "rand.h"
+
 
 std::string ReadMetalFile() {
 	
@@ -113,21 +115,25 @@ int main() {
 	MTL::Buffer* query= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
 	MTL::Buffer* key= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
 	MTL::Buffer* value= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
-	
+		
+//	MTL::Buffer* test = dev->newBuffer(N_seq * N_seq, MTL::ResourceStorageModeShared);
 	// ancillary buffers, shape = (N_seq)
 //	MTL::Buffer* l_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared);
 //	MTL::Buffer* m_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared); 
 
 	// Output, shape = (N_seq, n_embed)	
 	MTL::Buffer* buff_out = dev->newBuffer(N_seq*n_embed*sizeof(float), MTL::ResourceStorageModeShared);
+//	MTL::Buffer* buff_test = dev->newBuffer(N_seq*N_seq*sizeof(float), MTL::ResourceStorageModeShared);
 	
-
+	CustomRandom generator(42);
 
 	// copying data into CPU buffer
 	float buffer_cpu[total_el_size]; 
 
 	for(int i = 0; i < total_el_size; i++) {
-		buffer_cpu[i] = 0.00002 * i;
+		float randn = generator.generate();
+//		if(i < 40) std::cout << randn << std::endl;
+		buffer_cpu[i] = randn; 
 	}
 	
 
@@ -138,10 +144,12 @@ int main() {
 	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
 	
+
+
 	for(int i = 0; i < total_el_size; i++) {
 		((float*)(buff_out->contents()))[i] = 0.0;  
 	}
-
+	
 
 	
 //	memcpy(buff_out->contents(), buffer_cpu, total_el_size * sizeof(float));
@@ -167,6 +175,7 @@ int main() {
 	encoder->setBuffer(value, 0, 2);
 	encoder->setBuffer(buff_out, 0, 3);
 //	encoder->setBuffer(l_vals, 0, 4);
+//	encoder->setBuffer(buff_test, 0, 4);
 //	encoder->setBuffer(m_vals, 0, 5);
 
 	// setting threads and threadgroup sizes
@@ -195,10 +204,12 @@ int main() {
 
 	// print output contents (viz)
 	float* output_buffer = (float*)(buff_out->contents());
+//	float* test_buffer_out  = (float*)(buff_test->contents());
 	
 	int shape_arr_out[2] = {N_seq, n_embed};
 
 	print_tensor(output_buffer, shape_arr_out, 2);
+	//print_tensor(test_buffer_out, shape_arr_out, 2);
 
 	// print out buffer values
 	for(int i = 0; i < total_el_size; i++) {
