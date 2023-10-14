@@ -93,8 +93,8 @@ int main() {
 
 	// PARAMETERS
 
-	const unsigned int n_embed = 320;
-	const unsigned int N_seq = 64;
+	const unsigned int n_embed = 464;
+	const unsigned int N_seq = 464;
 	int shape_arr[2] = {N_seq, n_embed};
 	unsigned int total_el_size = N_seq * n_embed; 
 	
@@ -102,7 +102,8 @@ int main() {
 	unsigned int Q_BLOCK_SIZE = 4; 
 	unsigned int K_BLOCK_SIZE = 4;
 	
-
+	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
+	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
 
 	// PARAMETERS END
 
@@ -134,6 +135,7 @@ int main() {
 		float randn = generator.generate();
 //		if(i < 40) std::cout << randn << std::endl;
 		buffer_cpu[i] = randn; 
+		((float*)(buff_out->contents()))[i] = 0.0;
 	}
 	
 
@@ -144,13 +146,6 @@ int main() {
 	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
 	
-
-
-	for(int i = 0; i < total_el_size; i++) {
-		((float*)(buff_out->contents()))[i] = 0.0;  
-	}
-	
-
 	
 //	memcpy(buff_out->contents(), buffer_cpu, total_el_size * sizeof(float));
 
@@ -174,9 +169,7 @@ int main() {
 	encoder->setBuffer(key, 0, 1);
 	encoder->setBuffer(value, 0, 2);
 	encoder->setBuffer(buff_out, 0, 3);
-//	encoder->setBuffer(l_vals, 0, 4);
 //	encoder->setBuffer(buff_test, 0, 4);
-//	encoder->setBuffer(m_vals, 0, 5);
 
 	// setting threads and threadgroup sizes
 
@@ -210,15 +203,10 @@ int main() {
 
 	print_tensor(output_buffer, shape_arr_out, 2);
 	//print_tensor(test_buffer_out, shape_arr_out, 2);
-
-	// print out buffer values
-	for(int i = 0; i < total_el_size; i++) {
-//	std::cout << output_buffer[i] << "\n";
-	}
-
+		
 	dev->release();
-
-
+	
+	return 0;
 }
 
 

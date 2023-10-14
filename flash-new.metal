@@ -9,8 +9,8 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	const unsigned int query_size = 4;
 	const unsigned int key_size = 4;
-	const unsigned int embed_dim = 320;
-	const unsigned int seq_len = 64;
+	const unsigned int embed_dim = 464;
+	const unsigned int seq_len = 464;
 	const unsigned int num_keys = seq_len / key_size;
 
 
@@ -53,12 +53,10 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	for(int k = 0; k < num_keys; k++) {
 		threadgroup float KEY_SRAM[key_size * embed_dim];
 		threadgroup float VALUE_SRAM[key_size * embed_dim];
-		// copy values from HBM	
+		// copy values from HBM, each thread copies a little bit of the shared key/value tensor
 		for(int _ = 0; _ < elements_key_copy; _++) {
-//			KEY_SRAM[_] = key[(k*key_size*embed_dim) + _]; 
 			KEY_SRAM[tid.y * elements_key_copy + _] = key[(k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
 			VALUE_SRAM[tid.y * elements_key_copy + _] = value[(k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
-//			VALUE_SRAM[_] = value[(k*key_size*embed_dim) + _];
 		}
 
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
