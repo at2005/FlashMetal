@@ -9,25 +9,30 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	const unsigned int query_size = 4;
 	const unsigned int key_size = 4;
-	const unsigned int embed_dim = 32;
+	const unsigned int embed_dim = 320;
 	const unsigned int seq_len = 64;
 	const unsigned int num_keys = seq_len / key_size;
 
 
 	//  stored in SRAM
-	threadgroup float KEY_SRAM[seq_len * embed_dim]; 
-	threadgroup float VALUE_SRAM[seq_len * embed_dim];
-	threadgroup float QUERY_SRAM[seq_len * embed_dim];
-	
+	//threadgroup float KEY_SRAM[seq_len * embed_dim]; 
+	//threadgroup float VALUE_SRAM[seq_len * embed_dim];
+
+	//threadgroup float QUERY_SRAM[seq_len * embed_dim];
+	float QUERY_SRAM[query_size * embed_dim];
+
 	float dim_factor = metal::sqrt((float)embed_dim);
 
-
+	
+	
 	// copy all keys and values to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
 	for(int k = 0; k < elements_to_copy; k++) {	
-		QUERY_SRAM[tid.y * elements_to_copy + k] = query[tid.y * elements_to_copy + k];		
-		KEY_SRAM[tid.y * elements_to_copy + k] = key[tid.y * elements_to_copy + k];		
-		VALUE_SRAM[tid.y * elements_to_copy + k] = value[tid.y * elements_to_copy + k];		
+		QUERY_SRAM[k] = query[tid.y * elements_to_copy + k];		
+
+		//QUERY_SRAM[tid.y * elements_to_copy + k] = query[tid.y * elements_to_copy + k];		
+//		KEY_SRAM[tid.y * elements_to_copy + k] = key[tid.y * elements_to_copy + k];		
+//		VALUE_SRAM[tid.y * elements_to_copy + k] = value[tid.y * elements_to_copy + k];		
 		
 	}
 		
@@ -43,6 +48,14 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	// iterate over each key block and compute attention scores
 	for(int k = 0; k < num_keys; k++) {
+		float KEY_SRAM[key_size * embed_dim];
+		float VALUE_SRAM[key_size * embed_dim];
+		// copy values from HBM	
+		for(int _ = 0; _ < key_size*embed_dim; _++) {
+			KEY_SRAM[_] = key[(k*key_size*embed_dim) + _]; 
+			VALUE_SRAM[_] = value[(k*key_size*embed_dim) + _];
+		}
+
 		float OUTPUT_SRAM[query_size * key_size];
 		float ROW_MAX_LOCAL[query_size];
 		for(int _ = 0; _ < query_size; _++) ROW_MAX_LOCAL[_] = -INFINITY;
@@ -58,7 +71,9 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 					// the logic here is that we first index the query into the particular block, then 
 					// into the particular row (by i), then get the particular element by adding the offset.
 					// for the key, we first index by k to isolate the block, then by j to get the row, and then by el.
-					total_dot += QUERY_SRAM[(tid.y * query_size * embed_dim) + (i*embed_dim) + el] * KEY_SRAM[(k*key_size*embed_dim) + (j*embed_dim) + el];
+					//total_dot += QUERY_SRAM[(tid.y * query_size * embed_dim) + (i*embed_dim) + el] * KEY_SRAM[(k*key_size*embed_dim) + (j*embed_dim) + el];
+					total_dot += QUERY_SRAM[i*embed_dim+ el] * KEY_SRAM[(j*embed_dim) + el]; 
+
 				}
 				
 				// each query vector adds another row to the output attention scores
@@ -113,9 +128,11 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 				float val_dot = 0.0;
 				// dot prod computation
 				for(int el = 0; el < query_size; el++) {
-					val_dot += OUTPUT_SRAM[(att_row * query_size) + el] * VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
+					val_dot += OUTPUT_SRAM[(att_row * query_size) + el] * VALUE_SRAM[val_col + (el*embed_dim)];//* VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
 				}
 				
+//				out[outmat_i] = 1.4323;
+
 				// multiply to cancel out the previous incorrect row sums
 				out[outmat_i] *= ROW_SUM[att_row];
 				// multiply by e^old_max to cancel and -e to include new max	

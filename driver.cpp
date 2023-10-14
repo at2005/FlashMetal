@@ -93,7 +93,7 @@ int main() {
 
 	// PARAMETERS
 
-	const unsigned int n_embed = 32;
+	const unsigned int n_embed = 320;
 	const unsigned int N_seq = 64;
 	int shape_arr[2] = {N_seq, n_embed};
 	unsigned int total_el_size = N_seq * n_embed; 
