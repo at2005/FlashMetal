@@ -23,8 +23,6 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	float dim_factor = metal::sqrt((float)embed_dim);
 
-	
-	
 	// copy all keys and values to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
 	for(int k = 0; k < elements_to_copy; k++) {	
@@ -37,7 +35,6 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	}
 		
 	// ensure all threads finish copying before usage
-	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
 	float ROW_SUM[query_size];
 	float ROW_MAX[query_size];
@@ -45,17 +42,27 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 		ROW_SUM[_] = 0.0; 
 		ROW_MAX[_] = -INFINITY;
 	}
+	
+	// size = seq_len / num_threads
+	// each query must copy 1/num_threads of key/value which are size*embed_dim
+	// so because each key/val tensor is
 
+	unsigned int elements_key_copy = (key_size * key_size * embed_dim) / seq_len;
+	
 	// iterate over each key block and compute attention scores
 	for(int k = 0; k < num_keys; k++) {
-		float KEY_SRAM[key_size * embed_dim];
-		float VALUE_SRAM[key_size * embed_dim];
+		threadgroup float KEY_SRAM[key_size * embed_dim];
+		threadgroup float VALUE_SRAM[key_size * embed_dim];
 		// copy values from HBM	
-		for(int _ = 0; _ < key_size*embed_dim; _++) {
-			KEY_SRAM[_] = key[(k*key_size*embed_dim) + _]; 
-			VALUE_SRAM[_] = value[(k*key_size*embed_dim) + _];
+		for(int _ = 0; _ < elements_key_copy; _++) {
+//			KEY_SRAM[_] = key[(k*key_size*embed_dim) + _]; 
+			KEY_SRAM[tid.y * elements_key_copy + _] = key[(k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
+			VALUE_SRAM[tid.y * elements_key_copy + _] = value[(k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
+//			VALUE_SRAM[_] = value[(k*key_size*embed_dim) + _];
 		}
 
+		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+		
 		float OUTPUT_SRAM[query_size * key_size];
 		float ROW_MAX_LOCAL[query_size];
 		for(int _ = 0; _ < query_size; _++) ROW_MAX_LOCAL[_] = -INFINITY;
