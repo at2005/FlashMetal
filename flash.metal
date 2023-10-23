@@ -9,10 +9,21 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	const unsigned int query_size = 4;
 	const unsigned int key_size = 4;
-	const unsigned int embed_dim = 464;
-	const unsigned int seq_len = 464;
+	const unsigned int embed_dim = 64;
+	const unsigned int seq_len = 512;
 	const unsigned int num_keys = seq_len / key_size;
+	
+	const unsigned int batch_size = 9;
+	const unsigned int num_heads = 7;
 
+	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
+	const unsigned int num_values_head = seq_len * embed_dim;
+
+
+	// IMPORTANT
+	// tid.y contains the query index. Each threadgroup contains B_q query blocks, which compute a particular attention score. Each threadgroup contributes for one head in a single batch
+	// tgid.x contains the current head dimension
+	// tgid.y contains the current batch dimension
 
 	//  stored in SRAM
 	//threadgroup float KEY_SRAM[seq_len * embed_dim]; 
@@ -26,7 +37,7 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	// copy all keys and values to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
 	for(int k = 0; k < elements_to_copy; k++) {	
-		QUERY_SRAM[k] = query[tid.y * elements_to_copy + k];		
+		QUERY_SRAM[k] = query[(tgid.y * num_values_batch) + (tgid.x*num_values_head) + tid.y * elements_to_copy + k];		
 
 		//QUERY_SRAM[tid.y * elements_to_copy + k] = query[tid.y * elements_to_copy + k];		
 //		KEY_SRAM[tid.y * elements_to_copy + k] = key[tid.y * elements_to_copy + k];		
@@ -55,12 +66,12 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 		threadgroup float VALUE_SRAM[key_size * embed_dim];
 		// copy values from HBM, each thread copies a little bit of the shared key/value tensor
 		for(int _ = 0; _ < elements_key_copy; _++) {
-			KEY_SRAM[tid.y * elements_key_copy + _] = key[(k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
-			VALUE_SRAM[tid.y * elements_key_copy + _] = value[(k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
+			KEY_SRAM[tid.y * elements_key_copy + _] = key[(tgid.y * num_values_batch) + (tgid.x * num_values_head) + (k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
+			VALUE_SRAM[tid.y * elements_key_copy + _] = value[(tgid.y * num_values_batch) + (tgid.x * num_values_head) + (k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
 		}
-
-		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		
+		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+			
 		float OUTPUT_SRAM[query_size * key_size];
 		float ROW_MAX_LOCAL[query_size];
 		for(int _ = 0; _ < query_size; _++) ROW_MAX_LOCAL[_] = -INFINITY;
@@ -128,7 +139,7 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 			// iterate over each column in value matrix
 			for(int val_col = 0; val_col < embed_dim; val_col++) {
 
-				size_t outmat_i = (embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col;
+				size_t outmat_i = (tgid.y * num_values_batch) + (tgid.x * num_values_head) + (embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col;
 
 				float val_dot = 0.0;
 				// dot prod computation

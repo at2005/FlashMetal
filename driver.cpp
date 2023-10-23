@@ -15,7 +15,7 @@
 
 std::string ReadMetalFile() {
 	
-        std::ifstream shader_file("flash-new.metal");
+        std::ifstream shader_file("flash.metal");
         std::stringstream text_buffer;
         text_buffer << shader_file.rdbuf();
 	
@@ -92,16 +92,19 @@ int main() {
 
 
 	// PARAMETERS
-
-	const unsigned int n_embed = 464;
-	const unsigned int N_seq = 464;
-	int shape_arr[2] = {N_seq, n_embed};
-	unsigned int total_el_size = N_seq * n_embed; 
+	
+	const unsigned int batch_size = 9;
+	const unsigned int num_heads = 7;
+	const unsigned int n_embed = 64;
+	const unsigned int N_seq = 512;
+	int shape_arr[4] = {batch_size, num_heads, N_seq, n_embed};
+	unsigned int total_el_size = batch_size * num_heads * N_seq * n_embed; 
 	
 	// split into 16 blocks of size 4 each
 	unsigned int Q_BLOCK_SIZE = 4; 
 	unsigned int K_BLOCK_SIZE = 4;
-	
+
+	// print out utility values such as how many threads and how many values each thread must copy, this is just for my own debug information
 	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
 	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
 
@@ -117,15 +120,11 @@ int main() {
 	MTL::Buffer* key= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
 	MTL::Buffer* value= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
 		
-//	MTL::Buffer* test = dev->newBuffer(N_seq * N_seq, MTL::ResourceStorageModeShared);
-	// ancillary buffers, shape = (N_seq)
-//	MTL::Buffer* l_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared);
-//	MTL::Buffer* m_vals =  dev->newBuffer(N_seq, MTL::ResourceStorageModeShared); 
-
 	// Output, shape = (N_seq, n_embed)	
-	MTL::Buffer* buff_out = dev->newBuffer(N_seq*n_embed*sizeof(float), MTL::ResourceStorageModeShared);
-//	MTL::Buffer* buff_test = dev->newBuffer(N_seq*N_seq*sizeof(float), MTL::ResourceStorageModeShared);
-	
+	MTL::Buffer* buff_out = dev->newBuffer(total_el_size * sizeof(float), MTL::ResourceStorageModeShared);
+	//	MTL::Buffer* buff_test = dev->newBuffer(N_seq*N_seq*sizeof(float), MTL::ResourceStorageModeShared);
+
+	// set random seed to 42 bc hhgttg
 	CustomRandom generator(42);
 
 	// copying data into CPU buffer
@@ -133,7 +132,6 @@ int main() {
 
 	for(int i = 0; i < total_el_size; i++) {
 		float randn = generator.generate();
-//		if(i < 40) std::cout << randn << std::endl;
 		buffer_cpu[i] = randn; 
 		((float*)(buff_out->contents()))[i] = 0.0;
 	}
@@ -147,17 +145,6 @@ int main() {
 	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
 	
 	
-//	memcpy(buff_out->contents(), buffer_cpu, total_el_size * sizeof(float));
-
-/*	// copying -inf to m_vals and 0 to l_vals:
-	for(int i = 0; i < N_seq; i++) {
-		(float*)(l_vals->contents())[i] = 0;
-		(float*)(m_vals->contents())[i] = -INFINITY;
-
-	}	
-*/
-	
-
 	// command queue and command buffer are where we send our jobs
 	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
 	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();
@@ -182,8 +169,8 @@ int main() {
 	threads_threadgroup.depth = 1;
 
 	// for now batch size and head-size is 1
-	threadgroup_per_grid.height = 1;
-	threadgroup_per_grid.width  = 1;
+	threadgroup_per_grid.height = batch_size;
+	threadgroup_per_grid.width  = num_heads;
 	threadgroup_per_grid.depth = 1;
 
 	// perform computation	
@@ -199,9 +186,9 @@ int main() {
 	float* output_buffer = (float*)(buff_out->contents());
 //	float* test_buffer_out  = (float*)(buff_test->contents());
 	
-	int shape_arr_out[2] = {N_seq, n_embed};
+	int shape_arr_out[4] = {batch_size, num_heads, N_seq, n_embed};
 
-	print_tensor(output_buffer, shape_arr_out, 2);
+	print_tensor(output_buffer, shape_arr_out, 4);
 	//print_tensor(test_buffer_out, shape_arr_out, 2);
 		
 	dev->release();
