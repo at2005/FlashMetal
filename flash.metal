@@ -7,14 +7,14 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	// we will deal with a single query, and multiple keys through a loop. But first we gotta copy part of the keys to SRAM
 
-	const unsigned int query_size = 4;
-	const unsigned int key_size = 4;
-	const unsigned int embed_dim = 64;
-	const unsigned int seq_len = 512;
+	const unsigned int query_size = 8;
+	const unsigned int key_size = 8;
+	const unsigned int embed_dim = 96;
+	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
 	
-	const unsigned int batch_size = 9;
-	const unsigned int num_heads = 7;
+	const unsigned int batch_size = 64;
+	const unsigned int num_heads = 16;
 
 	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
 	const unsigned int num_values_head = seq_len * embed_dim;

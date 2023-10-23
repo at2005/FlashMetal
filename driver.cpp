@@ -93,16 +93,16 @@ int main() {
 
 	// PARAMETERS
 	
-	const unsigned int batch_size = 9;
-	const unsigned int num_heads = 7;
-	const unsigned int n_embed = 64;
-	const unsigned int N_seq = 512;
+	const unsigned int batch_size = 64;
+	const unsigned int num_heads = 16;
+	const unsigned int n_embed = 96;
+	const unsigned int N_seq = 1024;
 	int shape_arr[4] = {batch_size, num_heads, N_seq, n_embed};
 	unsigned int total_el_size = batch_size * num_heads * N_seq * n_embed; 
 	
 	// split into 16 blocks of size 4 each
-	unsigned int Q_BLOCK_SIZE = 4; 
-	unsigned int K_BLOCK_SIZE = 4;
+	unsigned int Q_BLOCK_SIZE = 8; 
+	unsigned int K_BLOCK_SIZE = 8;
 
 	// print out utility values such as how many threads and how many values each thread must copy, this is just for my own debug information
 	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
@@ -113,7 +113,7 @@ int main() {
 	// load function from metal shader file
 	MTL::Function* kernelFunc = library->newFunction(NS::String::string("attention", NS::UTF8StringEncoding));
 	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
-
+//	std::cout << pipeline->maxTotalThreadsPerThreadgroup() << std::endl;
 
 	// attention buffers, ie Q,K,V, shape = (N_seq, n_embed)
 	MTL::Buffer* query= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
@@ -128,7 +128,7 @@ int main() {
 	CustomRandom generator(42);
 
 	// copying data into CPU buffer
-	float buffer_cpu[total_el_size]; 
+	float* buffer_cpu = (float*)malloc(total_el_size * sizeof(float)); 
 
 	for(int i = 0; i < total_el_size; i++) {
 		float randn = generator.generate();
@@ -143,8 +143,11 @@ int main() {
 	memcpy(query->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
 	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
+
+	free(buffer_cpu);
 	
 	
+
 	// command queue and command buffer are where we send our jobs
 	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
 	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();
