@@ -11,7 +11,7 @@
 #include <fstream>
 #include <math.h>
 #include "rand.h"
-
+#include <torch/torch.h>
 
 std::string ReadMetalFile() {
 	

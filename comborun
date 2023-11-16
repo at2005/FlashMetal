@@ -1,0 +1,9 @@
+g++ -std=c++17 driver.cpp rand.cpp \
+-I/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/include \
+-I/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/include/torch/csrc/api/include \
+-I ~/metal-cpp \
+-L/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/lib \
+-Wl,-rpath,/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/lib \
+-lc10 -ltorch -ltorch_cpu -framework Foundation -framework QuartzCore -framework Metal \
+-o ./a.out; ./a.out
+
