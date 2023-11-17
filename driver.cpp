@@ -70,6 +70,8 @@ void print_tensor(float* buff, int* shape, unsigned int num_dim) {
 
 int main() {
 	
+	
+
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
 	
@@ -115,19 +117,24 @@ int main() {
 	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
 //	std::cout << pipeline->maxTotalThreadsPerThreadgroup() << std::endl;
 
-	// attention buffers, ie Q,K,V, shape = (N_seq, n_embed)
-	MTL::Buffer* query= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
-	MTL::Buffer* key= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
-	MTL::Buffer* value= dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
+	
+	torch::Tensor query_torch = torch::randn({batch_size, num_heads, N_seq, n_embed});//to(torch::kMPS);
+	torch::Tensor key_torch = torch::randn({batch_size, num_heads, N_seq, n_embed});//.to(torch::kMPS);
+	torch::Tensor value_torch = torch::randn({batch_size, num_heads, N_seq, n_embed});//.to(torch::kMPS);
 		
+	// attention buffers, ie Q,K,V, shape = (N_seq, n_embed)
+	MTL::Buffer* query= dev->newBuffer(query_torch.data_ptr(), total_el_size * sizeof(float), MTL::ResourceStorageModeShared);//dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
+	MTL::Buffer* key= dev->newBuffer(key_torch.data_ptr(), sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
+	MTL::Buffer* value= dev->newBuffer(value_torch.data_ptr(), sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
+	
 	// Output, shape = (N_seq, n_embed)	
 	MTL::Buffer* buff_out = dev->newBuffer(total_el_size * sizeof(float), MTL::ResourceStorageModeShared);
 	//	MTL::Buffer* buff_test = dev->newBuffer(N_seq*N_seq*sizeof(float), MTL::ResourceStorageModeShared);
 
 	// set random seed to 42 bc hhgttg
-	CustomRandom generator(42);
+//	CustomRandom generator(42);
 
-	// copying data into CPU buffer
+	/*// copying data into CPU buffer
 	float* buffer_cpu = (float*)malloc(total_el_size * sizeof(float)); 
 
 	for(int i = 0; i < total_el_size; i++) {
@@ -136,21 +143,22 @@ int main() {
 		((float*)(buff_out->contents()))[i] = 0.0;
 	}
 	
-
+	*/
 	//print_tensor(buffer_cpu, shape_arr, 2);
 
 	// copying CPU buffers into HBM memory buffer objects
-	memcpy(query->contents(), buffer_cpu, total_el_size * sizeof(float));
-	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
-	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
+//	memcpy(query->contents(), buffer_cpu, total_el_size * sizeof(float));
+//	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
+//	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
 
-	free(buffer_cpu);
+//	free(buffer_cpu);
 	
-	
-
 	// command queue and command buffer are where we send our jobs
-	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
-	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();
+	auto commandQueue = torch::mps::get_dispatch_queue();
+	MTL::CommandBuffer* commandBuffer = (MTL::CommandBuffer*)(torch::mps::get_command_buffer());
+//	std::cout << typeid(commandQueue);
+//	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
+//	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();
 	MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
 	encoder->setComputePipelineState(pipeline);
 
@@ -162,7 +170,6 @@ int main() {
 //	encoder->setBuffer(buff_test, 0, 4);
 
 	// setting threads and threadgroup sizes
-
 	// Sets up shape of grid... current shape is just 2D
 	MTL::Size threads_threadgroup; 
 	MTL::Size threadgroup_per_grid;
