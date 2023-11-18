@@ -98,7 +98,6 @@ int main() {
 	
 
 	// setting threads and threadgroup sizes
-	// Sets up shape of grid... current shape is just 2D
 	MTL::Size threads_threadgroup; 
 	MTL::Size threadgroup_per_grid;
 
@@ -106,7 +105,6 @@ int main() {
 	threads_threadgroup.width = 1;
 	threads_threadgroup.depth = 1;
 
-	// for now batch size and head-size is 1
 	threadgroup_per_grid.height = batch_size;
 	threadgroup_per_grid.width  = num_heads;
 	threadgroup_per_grid.depth = 1;
@@ -115,7 +113,7 @@ int main() {
 	// dispatch threads to GPU
 	encoder->dispatchThreadgroups(threadgroup_per_grid, threads_threadgroup);
 	encoder->endEncoding();
-	// commit jobs 
+	// commit jobs and wait before printing out
 	torch::mps::commit();
 	torch::mps::synchronize();
 
