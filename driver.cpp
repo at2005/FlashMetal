@@ -28,47 +28,6 @@ std::string ReadMetalFile() {
 }
 
 
-void create_prod_arr(int* shape_arr, int arr_size, int* output_arr, int curr_index) {
-	if(curr_index == arr_size-1) {
-		output_arr[arr_size - 1] = shape_arr[arr_size-1];	
-	}
-
-	else {
-		output_arr[curr_index] = output_arr[curr_index+1] * shape_arr[curr_index];
-	}	
-
-	if(curr_index == 0) return;
-
-	create_prod_arr(shape_arr, arr_size, output_arr, curr_index-1);
-}
-
-
-
-
-void print_tensor(float* buff, int* shape, unsigned int num_dim) {
-	// strategy: print in reverse dimensions
-	
-	std::cout << std::fixed;
-	 std::cout << std::setprecision(4);
-	int prod_arr[num_dim];
-	// here we create a product array where we store the cumulative product for the following elements of each element
-	create_prod_arr(shape, num_dim, prod_arr, num_dim-1);
-
-	int total_elements = prod_arr[0];
-
-	for(int j = 0; j < total_elements; j++) { 
-		std::cout << buff[j] << " ";
-		//printf("%f ", round(buff[j])); 
-		for(int i = 0; i < num_dim; i++) {
-			if((j+1) % prod_arr[i] == 0) {
-				printf("\n");
-			}
-
-		}
-	}
-
-}
-
 
 int main() {
 	
@@ -125,53 +84,12 @@ int main() {
 	torch::Tensor value = torch::randn({batch_size, num_heads, N_seq, n_embed}).to(torch::kMPS);
 	torch::Tensor out = torch::zeros({batch_size, num_heads, N_seq, n_embed}).to(torch::kMPS);
 
-	// attention buffers, ie Q,K,V, shape = (N_seq, n_embed)
-//	MTL::Buffer* query= dev->newBuffer(query_torch.data_ptr(), total_el_size * sizeof(float), MTL::ResourceStorageModeShared);//dev->newBuffer(sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
-//	MTL::Buffer* key= dev->newBuffer(key_torch.data_ptr(), sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
-//	MTL::Buffer* value= dev->newBuffer(value_torch.data_ptr(), sizeof(float) * total_el_size, MTL::ResourceStorageModeShared);
-	
-	// Output, shape = (N_seq, n_embed)	
-//	MTL::Buffer* buff_out = dev->newBuffer(total_el_size * sizeof(float), MTL::ResourceStorageModeShared);
-	//	MTL::Buffer* buff_test = dev->newBuffer(N_seq*N_seq*sizeof(float), MTL::ResourceStorageModeShared);
-
-	// set random seed to 42 bc hhgttg
-//	CustomRandom generator(42);
-
-	/*// copying data into CPU buffer
-	float* buffer_cpu = (float*)malloc(total_el_size * sizeof(float)); 
-
-	for(int i = 0; i < total_el_size; i++) {
-		float randn = generator.generate();
-		buffer_cpu[i] = randn; 
-		((float*)(buff_out->contents()))[i] = 0.0;
-	}
-	
-	*/
-	//print_tensor(buffer_cpu, shape_arr, 2);
-
-	// copying CPU buffers into HBM memory buffer objects
-//	memcpy(query->contents(), buffer_cpu, total_el_size * sizeof(float));
-//	memcpy(key->contents(), buffer_cpu, total_el_size * sizeof(float));
-//	memcpy(value->contents(), buffer_cpu, total_el_size * sizeof(float));
-
-//	free(buffer_cpu);
 	
 	// command queue and command buffer are where we send our jobs
 	auto commandQueue = torch::mps::get_dispatch_queue();
 	MTL::CommandBuffer* commandBuffer = (MTL::CommandBuffer*)(torch::mps::get_command_buffer());
-//	std::cout << typeid(commandQueue);
-//	MTL::CommandQueue* commandQueue = dev->newCommandQueue();
-//	MTL::CommandBuffer* commandBuffer = commandQueue->commandBuffer();
 	MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
 	encoder->setComputePipelineState(pipeline);
-
-	// set our buffer arguments
-/*	encoder->setBuffer(query, 0, 0);
-	encoder->setBuffer(key, 0, 1);
-	encoder->setBuffer(value, 0, 2);
-	encoder->setBuffer(buff_out, 0, 3);
-//	encoder->setBuffer(buff_test, 0, 4);
-*/
 
 	encoder->setBuffer(CONVERT_MTL(query), query.storage_offset(), 0);
 	encoder->setBuffer(CONVERT_MTL(key), key.storage_offset(), 1);
@@ -198,24 +116,10 @@ int main() {
 	encoder->dispatchThreadgroups(threadgroup_per_grid, threads_threadgroup);
 	encoder->endEncoding();
 	// commit jobs 
-//	commandBuffer->commit();
 	torch::mps::commit();
-	
-	// let CPU wait on GPU tasks
-	//commandBuffer->waitUntilCompleted();
-
-	// print output contents (viz)
-//	float* output_buffer = (float*)(buff_out->contents());
-//	float* test_buffer_out  = (float*)(buff_test->contents());
-	
-//	int shape_arr_out[4] = {batch_size, num_heads, N_seq, n_embed};
-	
 	torch::mps::synchronize();
 
 	std::cout << out << std::endl;
-
-//	print_tensor(output_buffer, shape_arr_out, 4);
-	//print_tensor(test_buffer_out, shape_arr_out, 2);
 		
 	dev->release();
 	
