@@ -202,7 +202,7 @@ int main() {
 	torch::mps::commit();
 	
 	// let CPU wait on GPU tasks
-	//commandBuffer->waitUntilCompleted();
+	commandBuffer->waitUntilCompleted();
 
 	// print output contents (viz)
 //	float* output_buffer = (float*)(buff_out->contents());
@@ -210,8 +210,6 @@ int main() {
 	
 //	int shape_arr_out[4] = {batch_size, num_heads, N_seq, n_embed};
 	
-	torch::mps::synchronize();
-
 	std::cout << out << std::endl;
 
 //	print_tensor(output_buffer, shape_arr_out, 4);
