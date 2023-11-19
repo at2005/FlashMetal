@@ -12,6 +12,7 @@
 #include <math.h>
 #include "rand.h"
 #include <torch/torch.h>
+#include <pybind11/pybind11.h>
 
 #define CONVERT_MTL(input_tensor) ((MTL::Buffer*)(input_tensor.storage().data()))
 
@@ -29,10 +30,8 @@ std::string ReadMetalFile() {
 
 
 
-int main() {
+torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out) {
 	
-	
-
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
 	
@@ -53,36 +52,25 @@ int main() {
 
 	}
 
+	c10::IntArrayRef shape = query.sizes();
+	unsigned int batch_size = shape[0];
+	unsigned int num_heads = shape[1];
+	unsigned int N_seq = shape[2];
+	unsigned int n_embed = shape[3];
 
-	// PARAMETERS
-	
-	const unsigned int batch_size = 64;
-	const unsigned int num_heads = 16;
-	const unsigned int n_embed = 96;
-	const unsigned int N_seq = 1024;
-	int shape_arr[4] = {batch_size, num_heads, N_seq, n_embed};
-	unsigned int total_el_size = batch_size * num_heads * N_seq * n_embed; 
-	
+
 	// split into 16 blocks of size 4 each
 	unsigned int Q_BLOCK_SIZE = 8; 
 	unsigned int K_BLOCK_SIZE = 8;
 
-	// print out utility values such as how many threads and how many values each thread must copy, this is just for my own debug information
 	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
 	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
 
 	// PARAMETERS END
-
 	// load function from metal shader file
 	MTL::Function* kernelFunc = library->newFunction(NS::String::string("attention", NS::UTF8StringEncoding));
 	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
-//	std::cout << pipeline->maxTotalThreadsPerThreadgroup() << std::endl;
-
 	
-	torch::Tensor query = torch::randn({batch_size, num_heads, N_seq, n_embed}).to(torch::kMPS);
-	torch::Tensor key = torch::randn({batch_size, num_heads, N_seq, n_embed}).to(torch::kMPS);
-	torch::Tensor value = torch::randn({batch_size, num_heads, N_seq, n_embed}).to(torch::kMPS);
-	torch::Tensor out = torch::zeros({batch_size, num_heads, N_seq, n_embed}).to(torch::kMPS);
 
 	
 	// command queue and command buffer are where we send our jobs
@@ -105,7 +93,7 @@ int main() {
 	threads_threadgroup.width = 1;
 	threads_threadgroup.depth = 1;
 
-	threadgroup_per_grid.height = batch_size;
+	threadgroup_per_grid.height = batch_size; 
 	threadgroup_per_grid.width  = num_heads;
 	threadgroup_per_grid.depth = 1;
 
@@ -121,8 +109,34 @@ int main() {
 		
 	dev->release();
 	
-	return 0;
+	return out;
 }
 
+torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value) {
+	// PARAMETERS
+	const unsigned int batch_size = 64;
+	const unsigned int num_heads = 16;
+	const unsigned int n_embed = 96;
+	const unsigned int N_seq = 1024;
 
+	int shape_arr[4] = {batch_size, num_heads, N_seq, n_embed};
+
+	/*
+	torch::Tensor query = torch::randn(shape_arr).to(torch::kMPS);
+	torch::Tensor key = torch::randn(shape_arr).to(torch::kMPS);
+	torch::Tensor value = torch::randn(shape_arr).to(torch::kMPS);
+	*/
+
+	// output tensor initialised to all zeros
+	torch::Tensor out = torch::empty_like(value).to(torch::kMPS);
+	
+	return FlashMPSDispatch(query, key, value, out); 
+
+
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+	m.def("FlashAttentionMPS", &FlashAttentionMPS); 
+
+}
 
