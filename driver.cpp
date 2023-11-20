@@ -10,8 +10,7 @@
 #include <sstream>
 #include <fstream>
 #include <math.h>
-#include "rand.h"
-#include <torch/torch.h>
+#include <torch/extension.h>
 #include <pybind11/pybind11.h>
 
 #define CONVERT_MTL(input_tensor) ((MTL::Buffer*)(input_tensor.storage().data()))
@@ -36,7 +35,7 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
 	
 	// print out GPU metadata
-	std::cout << "MAX THREADGROUP MEMORY: " << dev->maxThreadgroupMemoryLength() << "\n";
+//	std::cout << "MAX THREADGROUP MEMORY: " << dev->maxThreadgroupMemoryLength() << "\n";
 	// create command queue where we will dispatch our jobs
 	MTL::CommandQueue* cmd_queue = dev->newCommandQueue();
 
@@ -48,7 +47,7 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 
 	if(library == nullptr) {
 		 __builtin_printf( "%s", err->localizedDescription()->utf8String() );
-		std::cout << "Error";
+//		std::cout << "Error";
 
 	}
 
@@ -63,8 +62,8 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	unsigned int Q_BLOCK_SIZE = 8; 
 	unsigned int K_BLOCK_SIZE = 8;
 
-	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
-	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
+//	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
+//	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
 
 	// PARAMETERS END
 	// load function from metal shader file
@@ -104,8 +103,6 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	// commit jobs and wait before printing out
 	torch::mps::commit();
 	torch::mps::synchronize();
-
-	std::cout << out << std::endl;
 		
 	dev->release();
 	
@@ -118,14 +115,6 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 	const unsigned int num_heads = 16;
 	const unsigned int n_embed = 96;
 	const unsigned int N_seq = 1024;
-
-	int shape_arr[4] = {batch_size, num_heads, N_seq, n_embed};
-
-	/*
-	torch::Tensor query = torch::randn(shape_arr).to(torch::kMPS);
-	torch::Tensor key = torch::randn(shape_arr).to(torch::kMPS);
-	torch::Tensor value = torch::randn(shape_arr).to(torch::kMPS);
-	*/
 
 	// output tensor initialised to all zeros
 	torch::Tensor out = torch::empty_like(value).to(torch::kMPS);
