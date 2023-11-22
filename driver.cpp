@@ -27,27 +27,21 @@ std::string ReadMetalFile() {
 
 }
 
-
-
 torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out) {
 	
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
 	
 	// print out GPU metadata
-//	std::cout << "MAX THREADGROUP MEMORY: " << dev->maxThreadgroupMemoryLength() << "\n";
 	// create command queue where we will dispatch our jobs
 	MTL::CommandQueue* cmd_queue = dev->newCommandQueue();
-
-	std::string temp_file = ReadMetalFile();
-	const char* str = temp_file.c_str();
 	
 	NS::Error* err = nullptr;
-	MTL::Library* library= dev->newLibrary(NS::String::string(str, NS::UTF8StringEncoding), nullptr, &err);//newLibrary(NS::String::string("flash", NS::UTF8StringEncoding), nullptr, &err);
+	NS::String* filePath = NS::String::alloc()->string("flash.metallib", NS::StringEncoding::ASCIIStringEncoding);
+	MTL::Library* library = dev->newLibrary(filePath, NULL);	
 
 	if(library == nullptr) {
 		 __builtin_printf( "%s", err->localizedDescription()->utf8String() );
-//		std::cout << "Error";
 
 	}
 
