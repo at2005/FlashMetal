@@ -14,23 +14,16 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
 	
-//	const unsigned int batch_size = 64;
 	const unsigned int num_heads = 16;
 
 	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
 	const unsigned int num_values_head = seq_len * embed_dim;
-
 
 	// IMPORTANT
 	// tid.y contains the query index. Each threadgroup contains B_q query blocks, which compute a particular attention score. Each threadgroup contributes for one head in a single batch
 	// tgid.x contains the current head dimension
 	// tgid.y contains the current batch dimension
 
-	//  stored in SRAM
-	//threadgroup float KEY_SRAM[seq_len * embed_dim]; 
-	//threadgroup float VALUE_SRAM[seq_len * embed_dim];
-
-	//threadgroup float QUERY_SRAM[seq_len * embed_dim];
 	float QUERY_SRAM[query_size * embed_dim];
 
 	float dim_factor = metal::sqrt((float)embed_dim);
@@ -39,11 +32,6 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 	unsigned int elements_to_copy = query_size * embed_dim;
 	for(unsigned int k = 0; k < elements_to_copy; k++) {	
 		QUERY_SRAM[k] = query[(tgid.y * num_values_batch) + (tgid.x*num_values_head) + tid.y * elements_to_copy + k];		
-
-		//QUERY_SRAM[tid.y * elements_to_copy + k] = query[tid.y * elements_to_copy + k];		
-//		KEY_SRAM[tid.y * elements_to_copy + k] = key[tid.y * elements_to_copy + k];		
-//		VALUE_SRAM[tid.y * elements_to_copy + k] = value[tid.y * elements_to_copy + k];		
-		
 	}
 		
 	// ensure all threads finish copying before usage
@@ -102,24 +90,19 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 		}
 
-		
+			
 		float ROW_SUM_NEW[query_size];
 		// calculating row_sums and exponentiating with maximum
 		for(unsigned int row_i = 0; row_i < query_size; row_i++) {
 			float row_sum_local = 0.0;	
-
 			for(unsigned int row_el = 0; row_el < key_size; row_el++) {
 				size_t output_index = row_i * query_size + row_el;
 				if(tid.y * query_size + (row_i) < (k * key_size+ row_el)) {
 					OUTPUT_SRAM[output_index] = 0.0;
-				//	test[(tid.y * seq_len*query_size) + (row_i*seq_len) + (k * key_size+ row_el)] = 0.0; 
 					continue;
 				}
 				
-				//test[(tid.y * seq_len*query_size) + (row_i*seq_len) + (k * key_size+ row_el)] = OUTPUT_SRAM[output_index];
-
 				// compute exponent with stability
-//				if(OUTPUT_SRAM[output_index] == -INFINITY) OUTPUT_SRAM[output_index] = 0.0;
 				OUTPUT_SRAM[output_index] = metal::exp(OUTPUT_SRAM[output_index] - ROW_MAX_LOCAL[row_i]);
 				row_sum_local += OUTPUT_SRAM[output_index];	
 			}
@@ -136,7 +119,6 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 			float rowmax_new = metal::max(ROW_MAX[att_row], ROW_MAX_LOCAL[att_row]);
 			float sum_divisor = ((metal::exp(ROW_MAX[att_row] - rowmax_new) * ROW_SUM[att_row]) + (metal::exp(ROW_MAX_LOCAL[att_row] - rowmax_new) * ROW_SUM_NEW[att_row]));
 
-
 			// iterate over each column in value matrix
 			for(unsigned int val_col = 0; val_col < embed_dim; val_col++) {
 
@@ -148,7 +130,6 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 					val_dot += OUTPUT_SRAM[(att_row * query_size) + el] * VALUE_SRAM[val_col + (el*embed_dim)];//* VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
 				}
 				
-//				out[outmat_i] = 1.4323;
 
 				// multiply to cancel out the previous incorrect row sums
 				out[outmat_i] *= ROW_SUM[att_row];
