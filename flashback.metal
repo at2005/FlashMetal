@@ -2,8 +2,31 @@
 
 #include <metal_stdlib>
 
+
+void memcpy_hbm_to_local(thread float* output, const device float* input, unsigned int num_to_copy) {
+	for(unsigned int i = 0; i < num_to_copy; i++) {
+		output[i] = input[i];
+	}
+
+}
+
+void memcpy_hbm_to_sram(threadgroup float* output, const device float* input, unsigned int num_to_copy) {
+	for(unsigned int i = 0; i < num_to_copy; i++) {
+		output[i] = input[i];
+	}
+
+}
+
+void memcpy_sram_to_hbm(device float* output, const threadgroup float* input, unsigned int num_to_copy) {
+	for(unsigned int i = 0; i < num_to_copy; i++) {
+		output[i] = input[i];
+	}
+
+}
+
+
 kernel void backprop_attention(const device float* query[[buffer(0)]], const device float* key[[buffer(1)]], const device float* value[[buffer(2)]], 
-device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) {
+device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* out_dV [[buffer(5)]], device float* ROW_SUMS [[buffer(6)]], device float* ROW_MAX_VALS [[buffer(7)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) {
 	
 	
 	const unsigned int query_size = 8;
@@ -32,23 +55,23 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thr
 	// tgid.y contains the current batch dimension
 	
 	// initialise buffers for copying -- not in SRAM as we do not wish to share it
-	float QUERY_SRAM[num_el_query];
-	float OUTPUT_SRAM[num_el_query];
-	float dO_SRAM[num_el_query];
+	float QUERY_LOCAL[num_el_query];
+	float OUTPUT_LOCAL[num_el_query];
+	float dO_LOCAL[num_el_query];
 
 	float dim_factor = metal::sqrt((float)embed_dim);
 
 	// copy all queries/outputs to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
 		
-	memcpy(QUERY_SRAM, query + batch_index + head_index + tid.y*elements_to_copy, elements_to_copy * sizeof(float));
-	memcpy(OUTPUT_SRAM, out + batch_index + head_index + tid.y*elements_to_copy, elements_to_copy * sizeof(float));
-	memcpy(dO_SRAM, dO + batch_index + head_index + tid.y*elements_to_copy, elements_to_copy * sizeof(float));
+	memcpy_hbm_to_local(QUERY_LOCAL, query + batch_index + head_index + tid.y*elements_to_copy, elements_to_copy);
+	memcpy_hbm_to_local(OUTPUT_LOCAL, out + batch_index + head_index + tid.y*elements_to_copy, elements_to_copy);
+	memcpy_hbm_to_local(dO_LOCAL, dO + batch_index + head_index + tid.y*elements_to_copy, elements_to_copy);
 		
 	unsigned int elements_key_copy = (key_size * key_size * embed_dim) / seq_len;
 	
 	const unsigned int local_offset_kv = tid.y * elements_key_copy;
-	const unsigned int total_offset_bhkv = batch_index + head_index + local_offset_bhkv;
+	const unsigned int total_offset_bhkv = batch_index + head_index + local_offset_kv;
 	
 	
 	// iterate over each key block and compute attention scores
@@ -56,13 +79,13 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thr
 		threadgroup float KEY_SRAM[key_size * embed_dim];
 		threadgroup float VALUE_SRAM[key_size * embed_dim];
 		// copy from HBM, each thread copies a little bit of the shared key/value block into SRAM.
-		memcpy(KEY_SRAM + local_offset_kv, key + total_offset_bhkv + (k*num_el_kv), sizeof(float) * elements_key_copy);
-		memcpy(VALUE_SRAM + local_offset_kv, value + total_offset_bhkv + (k*num_el_kv), sizeof(float) * elements_key_copy);
+		memcpy_hbm_to_sram(KEY_SRAM + local_offset_kv, key + total_offset_bhkv + (k*num_el_kv),  elements_key_copy);
+		memcpy_hbm_to_sram(VALUE_SRAM + local_offset_kv, value + total_offset_bhkv + (k*num_el_kv),  elements_key_copy);
 
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		
 		// this contains the attention score matrix before softmax
-		float OUTPUT_SRAM[query_size * key_size];
+		float OUTPUT_LOCAL[query_size * key_size];
 
 		// do matmul -- outer loop is each row in Q-block
 		for(unsigned int i = 0; i < query_size; i++) {
@@ -71,7 +94,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thr
 				
 				// for LT matrix
 				if((tid.y * query_size + i) < (k * key_size + j)) {
-					OUTPUT_SRAM[i*query_size + j] = 0.0;
+					OUTPUT_LOCAL[i*query_size + j] = 0.0;
 					continue;
 				}
 
@@ -81,13 +104,17 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thr
 					// the logic here is that we first index the query into the particular block, then 
 					// into the particular row (by i), then get the particular element by adding the offset.
 					// for the key, we first index by k to isolate the block, then by j to get the row, and then by el.
-					//total_dot += QUERY_SRAM[(tid.y * query_size * embed_dim) + (i*embed_dim) + el] * KEY_SRAM[(k*key_size*embed_dim) + (j*embed_dim) + el];
-					total_dot += metal::exp((QUERY_SRAM[i*embed_dim+ el] * KEY_SRAM[(j*embed_dim) + el]) - ROW_MAX_VALS[i]) / ROW_SUMS[i];
+					//total_dot += QUERY_LOCAL[(tid.y * query_size * embed_dim) + (i*embed_dim) + el] * KEY_SRAM[(k*key_size*embed_dim) + (j*embed_dim) + el];
+					
+					// shape of row-based tensors = (b, h, seq_len)
+					// first index into batch. then head, then into block (part of seq len)
+					unsigned int row_val_offset = (tgid.y * num_heads * seq_len) + (tgid.x * seq_len) + (key_size*tid.y);
+					total_dot += metal::exp((QUERY_LOCAL[i*embed_dim+ el] * KEY_SRAM[(j*embed_dim) + el]) - ROW_MAX_VALS[row_val_offset + i]) / ROW_SUMS[row_val_offset + i];
 
 				}
 				
 				// each query vector adds another row to the output attention scores
-				OUTPUT_SRAM[i*query_size + j] = total_dot / dim_factor;				
+				OUTPUT_LOCAL[i*query_size + j] = total_dot / dim_factor;				
 
 			}
 
@@ -95,7 +122,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thr
 		
 		
 		// compute dV_part = P^T dO
-		// == each column of OUTPUT_SRAM dotted with each row of dO_SRAM
+		// == each column of OUTPUT_LOCAL dotted with each row of dO_LOCAL
 			
 		 const unsigned int dV_elements = key_size * embed_dim;
 		 const unsigned int num_threads = seq_len / query_size;
@@ -103,13 +130,13 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thr
 		 // SRAM contains all dVs computed by each thread in group
 		 threadgroup float dV[num_threads * dV_elements];
 
-		// iterate over each column (OUTPUT_SRAM is of shape (query_size, key_size)), and dO is of shape (query_size, embed_dim)
+		// iterate over each column (OUTPUT_LOCAL is of shape (query_size, key_size)), and dO is of shape (query_size, embed_dim)
 		for(unsigned int o_col = 0; o_col < query_size; o_col++) {
 			for(unsigned int dO_col = 0; dO_col < embed_dim; dO_col++) {
 				// dot product
 				float total_dot = 0.0;
 				for(unsigned int el = 0; el < query_size; el++) {
-					total_dot += OUTPUT_SRAM[el*key_size + o_col] * dO_col[el*embed_dim + dO_col];
+					total_dot += OUTPUT_LOCAL[el*key_size + o_col] * dO_LOCAL[el*embed_dim + dO_col];
 				}
 				
 				dV[tid.y * dV_elements + o_col*embed_dim + dO_col] = total_dot;	
@@ -131,19 +158,23 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], uint2 gid [[thr
 		// the logic here is that we only iterate over each set of num_el elements in the first dV block
 		// Then, for each of those, we accumulate all other dVs (1, 2, .. num_threads - 1) into zeroth block 
 
-		for(unsigned int idxset = 0; idx_in_set < num_el; idx_in_set++) {
+		for(unsigned int idx_in_set = 0; idx_in_set < num_el; idx_in_set++) {
 			// starts at zero technically but we need to offset by the current thread division
 			unsigned int offset_index = idx_in_set + tid.y * num_el;
 			// gotta accumulate 
 			for(unsigned int dV_index = 0; dV_index < num_threads; dV_index++) {
-				dV[offset_index] += dV[]					
+				dV[offset_index] += dV[dV_index * dV_elements + idx_in_set];
 
 			}
 
 		}
-			
 
+	
+		// now we want to copy this to an output tensor
+		memcpy_sram_to_hbm(out_dV + batch_index + head_index + (tid.y*dV_elements), dV, dV_elements); 
 
 
 	}
+
+
 }
