@@ -46,13 +46,8 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	const unsigned int num_el_kv = key_size * embed_dim;
 	const unsigned int num_el_query = query_size * embed_dim;
 
-	const unsigned int dV_elements = key_size * embed_dim;
-	const unsigned int num_threads = seq_len / query_size;
+	// Currently assume the existence of ROW_MAX, an array of dim (num query rows,1 )
 
-	const unsigned int row_val_offset = (tgid.y * num_heads * seq_len) + (tgid.x * seq_len) + (key_size*tid.y);
-	// Each thread adds num_el sets of elements, where num_el is number of elements in dV_i = embed_dim * key_size, divided by the total number of threads = (seq_len / query_size)
-	// hence num_el = query_size * key_size * embed_dim / seq_len
-	const unsigned int num_el = dV_elements / num_threads; 
 
 	// IMPORTANT
 	// tid.y contains the query index. Each threadgroup contains B_q query blocks, which compute a particular attention score. Each threadgroup contributes for one head in a single batch
@@ -61,20 +56,18 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	
 	// initialise buffers for copying -- not in SRAM as we do not wish to share it
 	float QUERY_LOCAL[num_el_query];
-	float OUTPUT_LOCAL[key_size * query_size];
+	float OUTPUT_LOCAL[num_el_query];
 	float dO_LOCAL[num_el_query];
 
 	float dim_factor = metal::sqrt((float)embed_dim);
 
 	// copy all queries/outputs to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
-	
-	for(int i = 0; i < elements_to_copy; i++) QUERY_LOCAL[i] = query[tid.y * elements_to_copy + i];
-
+		
+	memcpy_hbm_to_local(QUERY_LOCAL, query + sizeof(float)*(batch_index + head_index + tid.y*elements_to_copy), elements_to_copy);
+	memcpy_hbm_to_local(OUTPUT_LOCAL, out + sizeof(float)*(batch_index + head_index + tid.y*elements_to_copy), elements_to_copy);
 	memcpy_hbm_to_local(dO_LOCAL, dO + sizeof(float)*(batch_index + head_index + tid.y*elements_to_copy), elements_to_copy);
-	
-	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
-
+		
 	unsigned int elements_key_copy = (key_size * key_size * embed_dim) / seq_len;
 	
 	const unsigned int local_offset_kv = tid.y * elements_key_copy;
@@ -84,32 +77,30 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	threadgroup float KEY_SRAM[key_size * embed_dim];
 	threadgroup float VALUE_SRAM[key_size * embed_dim];
 
-	// SRAM contains sum of all dVs computed by each thread in group
-	threadgroup float dV_acc[dV_elements];
-	float dV[dV_elements];
-	
+	// SRAM contains all dVs computed by each thread in group
+	 threadgroup float dV[num_threads * dV_elements];
+
 	// iterate over each key block and compute attention scores
 	for(unsigned int k = 0; k < num_keys; k++) {
-		// copy from HBM, each thread copies a little bit of the shared key/value block into SRAM.	
-		for(int i = 0; i < elements_key_copy; i++) {
-			KEY_SRAM[local_offset_kv + i] = key[k*num_el_kv + total_offset_bhkv + i];
-			VALUE_SRAM[local_offset_kv + i] = value[k*num_el_kv + total_offset_bhkv + i];
-		}
-		
+		// copy from HBM, each thread copies a little bit of the shared key/value block into SRAM.
+		memcpy_hbm_to_sram(KEY_SRAM + sizeof(float)*local_offset_kv, key + sizeof(float)*(total_offset_bhkv + (k*num_el_kv)),  elements_key_copy);
+		memcpy_hbm_to_sram(VALUE_SRAM + sizeof(float)*local_offset_kv, value + sizeof(float)*(total_offset_bhkv + (k*num_el_kv)),  elements_key_copy);
+
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		
 		// this contains the attention score matrix before softmax
+		float OUTPUT_LOCAL[query_size * key_size];
 
 		// do matmul -- outer loop is each row in Q-block
 		for(unsigned int i = 0; i < query_size; i++) {
 			// inner loop is each row in K-block. Should be column but it's transposed
 			for(unsigned int j = 0; j < key_size; j++) {
-				/*	
+				
 				// for LT matrix
 				if((tid.y * query_size + i) < (k * key_size + j)) {
 					OUTPUT_LOCAL[i*query_size + j] = 0.0;
 					continue;
-				}*/
+				}
 
 				// compute dot product
 				float total_dot = 0.0;
@@ -121,22 +112,25 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 					
 					// shape of row-based tensors = (b, h, seq_len)
 					// first index into batch. then head, then into block (part of seq len)
-					total_dot += QUERY_LOCAL[i*embed_dim+ el] * KEY_SRAM[(j*embed_dim) + el];
+					unsigned int row_val_offset = (tgid.y * num_heads * seq_len) + (tgid.x * seq_len) + (key_size*tid.y);
+					total_dot += metal::exp((QUERY_LOCAL[i*embed_dim+ el] * KEY_SRAM[(j*embed_dim) + el]) - ROW_MAX_VALS[row_val_offset + i]) / ROW_SUMS[row_val_offset + i];
+
 				}
 				
 				// each query vector adds another row to the output attention scores
 				OUTPUT_LOCAL[i*query_size + j] = total_dot / dim_factor;				
-				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[row_val_offset + i]) / ROW_SUMS[row_val_offset + i];
-
-				out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
 
 			}
 
 		}
 		
-			
+		
 		// compute dV_part = P^T dO
 		// == each column of OUTPUT_LOCAL dotted with each row of dO_LOCAL
+			
+		 const unsigned int dV_elements = key_size * embed_dim;
+		 const unsigned int num_threads = seq_len / query_size;
+
 
 		// iterate over each column (OUTPUT_LOCAL is of shape (query_size, key_size)), and dO is of shape (query_size, embed_dim)
 		for(unsigned int o_col = 0; o_col < query_size; o_col++) {
@@ -147,49 +141,49 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 					total_dot += OUTPUT_LOCAL[el*key_size + o_col] * dO_LOCAL[el*embed_dim + dO_col];
 				}
 				
-				dV[o_col*embed_dim + dO_col] = total_dot;	
+				dV[tid.y * dV_elements + o_col*embed_dim + dO_col] = total_dot;	
 
 			}
 		}
 	
 		// all threads must finish computation
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
-		
-		// time to add!
-		// want to accumulate in a multi-threaded way
-		// basically chunk space up and iterate over each chunk, each thread writes particular bit into chunk
-		
-		// iteration zero -> thread zero writes to zeroth block here (each block is num_el elements)
-		// thread one writes to first etc etc
-		// iteration one -> thread zero write to first block, first block of its own matrix to first block of acc matrix
-		
-		// we get a pattern where tid.y is used to index into the appropriate block for each iteration
-		// for zeroth iteration, we have tid.y*num_el to index into, and then we just add the current iteration counter so ((tid.y+i) % num_threads) * num_el
-		// equivalent to reshaping matrix as (num_el, num_threads)
-		
-		for(int i = 0; i < num_el; i++) dV_acc[tid.y * num_el + i] = 0.0;
-		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
-		for(int i = 0; i < num_threads; i++) {
-			unsigned int rotated_block_index = ((tid.y + i) % num_threads) * num_el;
-			for(int el_acc = 0; el_acc < num_el; el_acc++) {
-				dV_acc[rotated_block_index + el_acc] += dV[rotated_block_index + el_acc];	
-				threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+		// perform parallel cumsum
+		// Each thread adds num_el sets of elements, where num_el is number of elements in dV_i = embed_dim * query_size, divided by the total number of threads = (seq_len / query_size)
+		// hence num_el = query_size^2 * embed_dim / seq_len
+		const unsigned int num_el = (query_size * query_size * embed_dim) / seq_len;
+
+		// time to add!
+		// each thread to index into dV and add all the other corresponding elements
+		// the logic here is that we only iterate over each set of num_el elements in the first dV block
+		// Then, for each of those, we accumulate all other dVs (1, 2, .. num_threads - 1) into zeroth block 
+
+		for(unsigned int idx_in_set = 0; idx_in_set < num_el; idx_in_set++) {
+			// starts at zero technically but we need to offset by the current thread division
+			unsigned int offset_index = idx_in_set + tid.y * num_el;
+			// gotta accumulate 
+			for(unsigned int dV_index = 0; dV_index < num_threads; dV_index++) {
+	//			dV[offset_index] += dV[dV_index * dV_elements + idx_in_set];
 
 			}
+
 		}
+
 		
 		// now we want to copy this to an output tensor
 //		memcpy_sram_to_hbm(out_dV + sizeof(float)*(batch_index + head_index + (tid.y*dV_elements)), dV, dV_elements); 
 		
-		for(int i = 0; i < num_el; i++) out_dV[k*dV_elements + tid.y * num_el + i] = dV_acc[tid.y * num_el + i];
 
-		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+		for(int out_i = 0; out_i < 96*1024; out_i++) {
+			//out_dV[(k * dV_elements) + (tid.y * num_el) + out_i] = dV[out_i] + 10; 
+			
+		}
 	
 		
 		
 
 	}
-	
+
 
 }

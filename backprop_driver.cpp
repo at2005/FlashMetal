@@ -17,15 +17,14 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
-	
 	// print out GPU metadata
 	// create command queue where we will dispatch our jobs
 	MTL::CommandQueue* cmd_queue = dev->newCommandQueue();
 	
 	NS::Error* err = nullptr;
 	NS::String* filePath = NS::String::alloc()->string("flashback.metallib", NS::StringEncoding::ASCIIStringEncoding);
+	
 	MTL::Library* library = dev->newLibrary(filePath, NULL);	
-	std::cout << library << std::endl;
 
 	if(library == nullptr) {
 		 __builtin_printf( "%s", err->localizedDescription()->utf8String() );
@@ -43,13 +42,13 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	unsigned int Q_BLOCK_SIZE = 8; 
 	unsigned int K_BLOCK_SIZE = 8;
 
-//	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
-//	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
+	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
+	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
 
 	// PARAMETERS END
 	// load function from metal shader file
 	MTL::Function* kernelFunc = library->newFunction(NS::String::string("backprop_attention", NS::UTF8StringEncoding));
-//	std::cout << kernelFunc << std::endl;
+	std::cout << kernelFunc << std::endl;
 	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
 		
 
@@ -75,6 +74,7 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	MTL::Size threadgroup_per_grid;
 
 	threads_threadgroup.height = N_seq / Q_BLOCK_SIZE;
+	std::cout << N_seq / Q_BLOCK_SIZE;
 	threads_threadgroup.width = 1;
 	threads_threadgroup.depth = 1;
 
@@ -102,32 +102,41 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 	const unsigned int n_embed = 96;
 	const unsigned int N_seq = 1024;
 	
-	 auto attn_scores = torch::matmul(query, key.transpose(-1, -2)) / std::sqrt(n_embed);
+	auto attn_scores = torch::matmul(query, key.transpose(-1, -2)) / std::sqrt(n_embed);
+
+    	auto max_value_tuple = torch::max(attn_scores, -1);
+	torch::Tensor max_values = std::get<0>(max_value_tuple); 
+    	
+	auto exp_attn = torch::exp(attn_scores);
+	auto row_sums = torch::sum(exp_attn, -1);
+	std::cout << row_sums.sizes() << max_values.sizes()<< std::endl;
+
 
     	auto attn_probs = torch::softmax(attn_scores, -1);
-
-    	auto max_value_tuple = torch::max(attn_probs, -1);
-	torch::Tensor max_values = std::get<0>(max_value_tuple); 
-
-    	auto row_sums = torch::sum(attn_probs, -1);
-
-
-
+	
+	auto naive_dV = torch::matmul(attn_probs.transpose(-1, -2), dO);
+//	std::cout << naive_dV;	
 	// output tensor initialised to all zeros
-	torch::Tensor out = torch::empty_like(value).to(torch::kMPS);
-	return FlashMPSDispatch(query, key, value, out, dO, out_dV, row_sums, max_values); 
+	torch::Tensor out = torch::zeros({1,1,1024,1024}).to(torch::kMPS);
+//	std::cout << exp_attn << std::endl << std::endl;
+//	std::cout << torch::sum(attn_probs, -1) << std::endl;
+	return FlashMPSDispatch(query, key, value, out, dO, out_dV, row_sums, max_values) - attn_probs; 
 
 
 }
 
 int main() {
-	torch::Tensor query = torch::randn({1, 1, 96, 1024}).to(torch::kMPS); 
-	torch::Tensor key = torch::randn({1, 1, 96, 1024}).to(torch::kMPS); 
-	torch::Tensor value = torch::randn({1, 1, 96, 1024}).to(torch::kMPS); 
-	torch::Tensor dO = torch::randn({1,1, 96, 1024}).to(torch::kMPS);
-	torch::Tensor out_dV = torch::randn({1,1,96, 1024}).to(torch::kMPS);
+	torch::Tensor query = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
+	torch::Tensor key = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
+	torch::Tensor value = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
+	torch::Tensor dO = torch::randn({1,1, 1024, 96}).to(torch::kMPS);
+	torch::Tensor out_dV = torch::zeros({1,1,1024, 96}).to(torch::kMPS);
 	
-	std::cout << FlashAttentionMPS(query, key, value, dO, out_dV) << std::endl;
+//	std::cout << out_dV << std::endl;
+
+	std::cout << (FlashAttentionMPS(query, key, value, dO, out_dV)); 
+//FlashAttentionMPS(query, key, value, dO, out_dV); 
+
 	return 0;
 	
 
