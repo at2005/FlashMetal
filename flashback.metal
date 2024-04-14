@@ -3,28 +3,6 @@
 #include <metal_stdlib>
 
 
-void memcpy_hbm_to_local(thread float* output, const device float* input, unsigned int num_to_copy) {
-	for(unsigned int i = 0; i < num_to_copy; i++) {
-		output[i] = input[i];
-	}
-
-}
-
-void memcpy_hbm_to_sram(threadgroup float* output, const device float* input, unsigned int num_to_copy) {
-	for(unsigned int i = 0; i < num_to_copy; i++) {
-		output[i] = input[i];
-	}
-
-}
-
-void memcpy_sram_to_hbm(device float* output, const threadgroup float* input, unsigned int num_to_copy) {
-	for(unsigned int i = 0; i < num_to_copy; i++) {
-		output[i] = input[i];
-	}
-
-}
-
-
 kernel void backprop_attention(const device float* query[[buffer(0)]], const device float* key[[buffer(1)]], const device float* value[[buffer(2)]], 
 device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* out_dV [[buffer(5)]], device float* ROW_SUMS [[buffer(6)]], device float* ROW_MAX_VALS [[buffer(7)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) {
 	
@@ -69,10 +47,11 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	// copy all queries/outputs to SRAM
 	unsigned int elements_to_copy = query_size * embed_dim;
 	
-	for(int i = 0; i < elements_to_copy; i++) QUERY_LOCAL[i] = query[tid.y * elements_to_copy + i];
+	for(int i = 0; i < elements_to_copy; i++) {
+		QUERY_LOCAL[i] = query[tid.y * elements_to_copy + i];
+		dO_LOCAL[i] = dO[tid.y * elements_to_copy + i];
+	}
 
-	memcpy_hbm_to_local(dO_LOCAL, dO + sizeof(float)*(batch_index + head_index + tid.y*elements_to_copy), elements_to_copy);
-	
 	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
 	unsigned int elements_key_copy = (key_size * key_size * embed_dim) / seq_len;
@@ -126,9 +105,9 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 				
 				// each query vector adds another row to the output attention scores
 				OUTPUT_LOCAL[i*query_size + j] = total_dot / dim_factor;				
-				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[row_val_offset + i]) / ROW_SUMS[row_val_offset + i];
+				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[tid.y * query_size + i]) / ROW_SUMS[row_val_offset + i];
 
-				out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
+//				out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
 
 			}
 
@@ -180,13 +159,10 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		}
 		
 		// now we want to copy this to an output tensor
-//		memcpy_sram_to_hbm(out_dV + sizeof(float)*(batch_index + head_index + (tid.y*dV_elements)), dV, dV_elements); 
-		
 		for(int i = 0; i < num_el; i++) out_dV[k*dV_elements + tid.y * num_el + i] = dV_acc[tid.y * num_el + i];
 
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 	
-		
 		
 
 	}

@@ -92,7 +92,7 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 		
 	dev->release();
 	
-	return out;
+	return out_dV;
 }
 
 torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& dO, torch::Tensor& out_dV) {
@@ -106,21 +106,22 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 
     	auto max_value_tuple = torch::max(attn_scores, -1);
 	torch::Tensor max_values = std::get<0>(max_value_tuple); 
-    	
-	auto exp_attn = torch::exp(attn_scores);
+    	//std::cout << max_values << std::endl;	
+	max_values = max_values.unsqueeze(-1);	
+	auto exp_attn = torch::exp(attn_scores - max_values);
 	auto row_sums = torch::sum(exp_attn, -1);
-	std::cout << row_sums.sizes() << max_values.sizes()<< std::endl;
+//	std::cout << row_sums.sizes() << max_values.sizes()<< std::endl;
 
-
-    	auto attn_probs = torch::softmax(attn_scores, -1);
+ //   	auto attn_probs = torch::softmax(attn_scores, -1);
 	
-	auto naive_dV = torch::matmul(attn_probs.transpose(-1, -2), dO);
+//	auto naive_dV = torch::matmul(attn_probs.transpose(-1, -2), dO);
 //	std::cout << naive_dV;	
 	// output tensor initialised to all zeros
 	torch::Tensor out = torch::zeros({1,1,1024,1024}).to(torch::kMPS);
 //	std::cout << exp_attn << std::endl << std::endl;
 //	std::cout << torch::sum(attn_probs, -1) << std::endl;
-	return FlashMPSDispatch(query, key, value, out, dO, out_dV, row_sums, max_values) - attn_probs; 
+//	std::cout << naive_dV << "\n\n\n\n";
+	return  FlashMPSDispatch(query, key, value, out, dO, out_dV, row_sums, max_values);
 
 
 }
