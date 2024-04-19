@@ -41,6 +41,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	float QUERY_LOCAL[num_el_query];
 	float OUTPUT_LOCAL[key_size * query_size];
 	float dO_LOCAL[num_el_query];
+	float O_LOCAL[num_el_query];
 
 	float dim_factor = metal::sqrt((float)embed_dim);
 
@@ -50,6 +51,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	for(int i = 0; i < elements_to_copy; i++) {
 		QUERY_LOCAL[i] = query[tid.y * elements_to_copy + i];
 		dO_LOCAL[i] = dO[tid.y * elements_to_copy + i];
+		O_LOCAL[i] = out[tid.y * elements_to_copy + i];
 	}
 
 	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
@@ -66,6 +68,8 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	// SRAM contains sum of all dVs computed by each thread in group
 	threadgroup float dV_acc[dV_elements];
 	float dV[dV_elements];
+
+	float dP[key_size * query_size];
 	
 	// iterate over each key block and compute attention scores
 	for(unsigned int k = 0; k < num_keys; k++) {
@@ -162,8 +166,35 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		for(int i = 0; i < num_el; i++) out_dV[k*dV_elements + tid.y * num_el + i] = dV_acc[tid.y * num_el + i];
 
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
-	
 		
+		for(unsigned int dO_row = 0; dO_row < query_size; dO_row++) {
+			for(unsigned int VT_col = 0; VT_col < key_size; VT_col++) {
+				float total_dot = 0.0;
+				for(unsigned int i = 0; i < embed_dim; i++) {
+					total_dot += dO_LOCAL[dO_row * n_embed + i] * VALUE_SRAM[VT_col * n_embed + i];
+				}
+				
+				dP[dO_row * key_size + VT_col] = total_dot;
+				
+
+			}
+		}
+
+		// start computing row-sum
+		for(unsigned int o_row = 0; o_row < query_size; o_row++) {
+			float total_acc = 0.0;
+			for(unsigned int row_el = 0; row_el < n_embed; row_el++) {
+				unsigned int idx = o_row * n_embed + row_el;
+				total_acc += dO_LOCAL[idx] * O_LOCAL[idx];
+			} 
+			
+			for(int i = 0; i < key_size; i++) {
+				dP[o_row*query_size + i] -= total_acc;
+				dP[o_row*query_size + i] *= P[o_row * query_size + i];
+			}
+		}
+
+			
 
 	}
 	
