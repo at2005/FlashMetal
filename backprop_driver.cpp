@@ -13,7 +13,7 @@
 
 #define CONVERT_MTL(input_tensor) ((MTL::Buffer*)(input_tensor.storage().data()))
 
-torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& dO, torch::Tensor& out_dV, torch::Tensor& row_sums, torch::Tensor& row_max_vals) {
+torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& dO, torch::Tensor& out_dQ, torch::Tensor& out_dK, torch::Tensor& out_dV, torch::Tensor& row_sums, torch::Tensor& row_max_vals) {
 	
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
@@ -64,9 +64,11 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	encoder->setBuffer(CONVERT_MTL(value), value.storage_offset(), 2);
 	encoder->setBuffer(CONVERT_MTL(out), out.storage_offset(), 3); 
 	encoder->setBuffer(CONVERT_MTL(dO), dO.storage_offset(), 4); 
-	encoder->setBuffer(CONVERT_MTL(out_dV), out_dV.storage_offset(), 5); 
-	encoder->setBuffer(CONVERT_MTL(row_sums), row_sums.storage_offset(), 6); 
-	encoder->setBuffer(CONVERT_MTL(row_max_vals), row_max_vals.storage_offset(), 7); 
+	encoder->setBuffer(CONVERT_MTL(out_dQ), out_dQ.storage_offset(), 5); 
+	encoder->setBuffer(CONVERT_MTL(out_dK), out_dK.storage_offset(), 6); 
+	encoder->setBuffer(CONVERT_MTL(out_dV), out_dV.storage_offset(), 7); 
+	encoder->setBuffer(CONVERT_MTL(row_sums), row_sums.storage_offset(), 8); 
+	encoder->setBuffer(CONVERT_MTL(row_max_vals), row_max_vals.storage_offset(), 9); 
 
 
 	// setting threads and threadgroup sizes
@@ -92,10 +94,10 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 		
 	dev->release();
 	
-	return out_dV;
+	return out_dQ;
 }
 
-torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& dO, torch::Tensor& out_dV) {
+torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& dO, torch::Tensor& out_dQ, torch::Tensor& out_dK, torch::Tensor& out_dV) {
 	// PARAMETERS
 	const unsigned int batch_size = 1;
 	const unsigned int num_heads = 1;
@@ -111,6 +113,13 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 	auto exp_attn = torch::exp(attn_scores - max_values);
 	auto row_sums = torch::sum(exp_attn, -1);
 //	std::cout << row_sums.sizes() << max_values.sizes()<< std::endl;
+	
+	auto P = torch::softmax(attn_scores, -1);
+	auto dP = torch::matmul(dO, value.transpose(-1, -2));
+	auto dS = torch::mul(P, dP - torch::sum(torch::mul(dP, P), -1, true));
+//	auto dK = torch::matmul(dS.transpose(-1, -2), query);
+	auto dQ = torch::matmul(dS, key);
+	std::cout << dQ << "\n\n\n\n\n\n\n\n\n\n\n\n\n";
 
  //   	auto attn_probs = torch::softmax(attn_scores, -1);
 	
@@ -121,7 +130,7 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 //	std::cout << exp_attn << std::endl << std::endl;
 //	std::cout << torch::sum(attn_probs, -1) << std::endl;
 //	std::cout << naive_dV << "\n\n\n\n";
-	return  FlashMPSDispatch(query, key, value, out, dO, out_dV, row_sums, max_values);
+	return  FlashMPSDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sums, max_values);
 
 
 }
@@ -131,12 +140,14 @@ int main() {
 	torch::Tensor key = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
 	torch::Tensor value = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
 	torch::Tensor dO = torch::randn({1,1, 1024, 96}).to(torch::kMPS);
+	torch::Tensor out_dQ = torch::zeros({1,1,1024, 96}).to(torch::kMPS);
+	torch::Tensor out_dK = torch::zeros({1,1,1024, 96}).to(torch::kMPS);
 	torch::Tensor out_dV = torch::zeros({1,1,1024, 96}).to(torch::kMPS);
 	
 //	std::cout << out_dV << std::endl;
 
-	std::cout << (FlashAttentionMPS(query, key, value, dO, out_dV)); 
-//FlashAttentionMPS(query, key, value, dO, out_dV); 
+	std::cout << (FlashAttentionMPS(query, key, value, dO, out_dQ, out_dK, out_dV)); 
+	//(FlashAttentionMPS(query, key, value, dO, out_dQ, out_dK, out_dV)); 
 
 	return 0;
 	

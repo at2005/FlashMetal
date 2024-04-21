@@ -4,7 +4,7 @@
 
 
 kernel void backprop_attention(const device float* query[[buffer(0)]], const device float* key[[buffer(1)]], const device float* value[[buffer(2)]], 
-device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* out_dV [[buffer(5)]], device float* ROW_SUMS [[buffer(6)]], device float* ROW_MAX_VALS [[buffer(7)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) {
+device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* out_dQ [[buffer(5)]], device float* out_dK [[buffer(6)]], device float* out_dV [[buffer(7)]], device float* ROW_SUMS [[buffer(8)]], device float* ROW_MAX_VALS [[buffer(9)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) {
 	
 	
 	const unsigned int query_size = 8;
@@ -42,16 +42,18 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	float OUTPUT_LOCAL[key_size * query_size];
 	float dO_LOCAL[num_el_query];
 	float O_LOCAL[num_el_query];
-
+	float dQ[num_el_query];
+	float dK[num_el_kv];
 	float dim_factor = metal::sqrt((float)embed_dim);
 
 	// copy all queries/outputs to SRAM
-	unsigned int elements_to_copy = query_size * embed_dim;
+	unsigned int elements_to_copy = num_el_query; 
 	
-	for(int i = 0; i < elements_to_copy; i++) {
+	for(unsigned int i = 0; i < elements_to_copy; i++) {
 		QUERY_LOCAL[i] = query[tid.y * elements_to_copy + i];
 		dO_LOCAL[i] = dO[tid.y * elements_to_copy + i];
 		O_LOCAL[i] = out[tid.y * elements_to_copy + i];
+		dQ[i] = 0.0;
 	}
 
 	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
@@ -66,7 +68,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	threadgroup float VALUE_SRAM[key_size * embed_dim];
 
 	// SRAM contains sum of all dVs computed by each thread in group
-	threadgroup float dV_acc[dV_elements];
+	threadgroup float dKV_acc[dV_elements];
 	float dV[dV_elements];
 
 	float dP[key_size * query_size];
@@ -74,7 +76,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	// iterate over each key block and compute attention scores
 	for(unsigned int k = 0; k < num_keys; k++) {
 		// copy from HBM, each thread copies a little bit of the shared key/value block into SRAM.	
-		for(int i = 0; i < elements_key_copy; i++) {
+		for(unsigned int i = 0; i < elements_key_copy; i++) {
 			KEY_SRAM[local_offset_kv + i] = key[k*num_el_kv + total_offset_bhkv + i];
 			VALUE_SRAM[local_offset_kv + i] = value[k*num_el_kv + total_offset_bhkv + i];
 		}
@@ -150,20 +152,20 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		// for zeroth iteration, we have tid.y*num_el to index into, and then we just add the current iteration counter so ((tid.y+i) % num_threads) * num_el
 		// equivalent to reshaping matrix as (num_el, num_threads)
 		
-		for(int i = 0; i < num_el; i++) dV_acc[tid.y * num_el + i] = 0.0;
+		for(unsigned int i = 0; i < num_el; i++) dKV_acc[tid.y * num_el + i] = 0.0;
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
-		for(int i = 0; i < num_threads; i++) {
+		for(unsigned int i = 0; i < num_threads; i++) {
 			unsigned int rotated_block_index = ((tid.y + i) % num_threads) * num_el;
-			for(int el_acc = 0; el_acc < num_el; el_acc++) {
-				dV_acc[rotated_block_index + el_acc] += dV[rotated_block_index + el_acc];	
+			for(unsigned int el_acc = 0; el_acc < num_el; el_acc++) {
+				dKV_acc[rotated_block_index + el_acc] += dV[rotated_block_index + el_acc];	
 				threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
 			}
 		}
 		
 		// now we want to copy this to an output tensor
-		for(int i = 0; i < num_el; i++) out_dV[k*dV_elements + tid.y * num_el + i] = dV_acc[tid.y * num_el + i];
+		for(unsigned int i = 0; i < num_el; i++) out_dV[k*dV_elements + tid.y * num_el + i] = dKV_acc[tid.y * num_el + i];
 
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		
@@ -171,7 +173,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 			for(unsigned int VT_col = 0; VT_col < key_size; VT_col++) {
 				float total_dot = 0.0;
 				for(unsigned int i = 0; i < embed_dim; i++) {
-					total_dot += dO_LOCAL[dO_row * n_embed + i] * VALUE_SRAM[VT_col * n_embed + i];
+					total_dot += dO_LOCAL[dO_row * embed_dim + i] * VALUE_SRAM[VT_col * embed_dim + i];
 				}
 				
 				dP[dO_row * key_size + VT_col] = total_dot;
@@ -183,20 +185,68 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		// start computing row-sum
 		for(unsigned int o_row = 0; o_row < query_size; o_row++) {
 			float total_acc = 0.0;
-			for(unsigned int row_el = 0; row_el < n_embed; row_el++) {
-				unsigned int idx = o_row * n_embed + row_el;
+			for(unsigned int row_el = 0; row_el < embed_dim; row_el++) {
+				unsigned int idx = o_row * embed_dim + row_el;
 				total_acc += dO_LOCAL[idx] * O_LOCAL[idx];
 			} 
 			
-			for(int i = 0; i < key_size; i++) {
-				dP[o_row*query_size + i] -= total_acc;
-				dP[o_row*query_size + i] *= P[o_row * query_size + i];
+			for(unsigned int i = 0; i < key_size; i++) {
+				dP[o_row*key_size + i] -= total_acc;
+				dP[o_row*key_size + i] *= (OUTPUT_LOCAL[o_row * query_size + i]); 
 			}
 		}
 
+				
+		// matmul dP with K_SRAM
+		// dP = (query_size , key_size), K_SRAM = (key_size, embed_dim)
+		// dQ = (query_size, embed_dim)
+
+		for(unsigned int dp_row = 0; dp_row < query_size; dp_row++) {
+			for(unsigned int k_col = 0; k_col < embed_dim; k_col++) {
+				for(unsigned int i = 0; i < key_size; i++) {
+					dQ[dp_row * embed_dim + k_col] += dP[dp_row * key_size + i] *  KEY_SRAM[k_col + i*embed_dim];  
+				}
+			}
+		}
+		
+		// dp^T = (key_size, query_size), Q = (query_size, embed_dim)
+		for(unsigned int dp_col = 0; dp_col < key_size; dp_col++) {
+			for(unsigned int q_col = 0; q_col < embed_dim; q_col++) {
+				float total_dot = 0.0;
+				for(unsigned int i = 0; i < query_size; i++) {
+					total_dot += dP[i * key_size + dp_col] * QUERY_LOCAL[i * embed_dim + q_col];
+				}
+				
+				dK[dp_col * embed_dim + q_col] = total_dot;
+
+			}
+		}
+		
+		for(unsigned int i = 0; i < num_el; i++) dKV_acc[tid.y * num_el + i] = 0.0;
+		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+		
+		for(unsigned int i = 0; i < num_threads; i++) {
+			unsigned int rotated_block_index = ((tid.y + i) % num_threads) * num_el;
+			for(unsigned int el_acc = 0; el_acc < num_el; el_acc++) {
+				dKV_acc[rotated_block_index + el_acc] += dK[rotated_block_index + el_acc];	
+				threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+
+			}
+		}
+			
+					
+		for(unsigned int i = 0; i < num_el; i++) out_dK[k*dV_elements + tid.y * num_el + i] = dKV_acc[tid.y * num_el + i];
 			
 
 	}
-	
+
+	for(unsigned int i = 0; i < num_el_query; i++) {
+
+		out_dQ[tid.y * num_el_query + i] = dQ[i];
+
+
+	}
+
+
 
 }
