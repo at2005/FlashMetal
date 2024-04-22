@@ -89,23 +89,16 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		for(unsigned int i = 0; i < query_size; i++) {
 			// inner loop is each row in K-block. Should be column but it's transposed
 			for(unsigned int j = 0; j < key_size; j++) {
-				/*	
+					
 				// for LT matrix
 				if((tid.y * query_size + i) < (k * key_size + j)) {
 					OUTPUT_LOCAL[i*query_size + j] = 0.0;
 					continue;
-				}*/
+				}
 
 				// compute dot product
 				float total_dot = 0.0;
 				for(unsigned int el = 0; el < embed_dim; el++) { 
-					// the logic here is that we first index the query into the particular block, then 
-					// into the particular row (by i), then get the particular element by adding the offset.
-					// for the key, we first index by k to isolate the block, then by j to get the row, and then by el.
-					//total_dot += QUERY_LOCAL[(tid.y * query_size * embed_dim) + (i*embed_dim) + el] * KEY_SRAM[(k*key_size*embed_dim) + (j*embed_dim) + el];
-					
-					// shape of row-based tensors = (b, h, seq_len)
-					// first index into batch. then head, then into block (part of seq len)
 					total_dot += QUERY_LOCAL[i*embed_dim+ el] * KEY_SRAM[(j*embed_dim) + el];
 				}
 				
@@ -113,12 +106,13 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 				OUTPUT_LOCAL[i*query_size + j] = total_dot / dim_factor;				
 				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[tid.y * query_size + i]) / ROW_SUMS[row_val_offset + i];
 
-//				out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
+			//	out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
 
 			}
 
 		}
 		
+		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 			
 		// compute dV_part = P^T dO
 		// == each column of OUTPUT_LOCAL dotted with each row of dO_LOCAL
@@ -177,7 +171,6 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 				}
 				
 				dP[dO_row * key_size + VT_col] = total_dot;
-				
 
 			}
 		}
@@ -192,7 +185,8 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 			
 			for(unsigned int i = 0; i < key_size; i++) {
 				dP[o_row*key_size + i] -= total_acc;
-				dP[o_row*key_size + i] *= (OUTPUT_LOCAL[o_row * query_size + i]); 
+				dP[o_row*key_size + i] *= (OUTPUT_LOCAL[o_row * query_size + i]);// * 1/dim_factor; 
+				
 			}
 		}
 
@@ -201,14 +195,16 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		// dP = (query_size , key_size), K_SRAM = (key_size, embed_dim)
 		// dQ = (query_size, embed_dim)
 
+		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		for(unsigned int dp_row = 0; dp_row < query_size; dp_row++) {
 			for(unsigned int k_col = 0; k_col < embed_dim; k_col++) {
 				for(unsigned int i = 0; i < key_size; i++) {
-					dQ[dp_row * embed_dim + k_col] += dP[dp_row * key_size + i] *  KEY_SRAM[k_col + i*embed_dim];  
+					dQ[dp_row * embed_dim + k_col] += (dP[dp_row * key_size + i] *  KEY_SRAM[k_col + i*embed_dim]);  
 				}
 			}
 		}
 		
+		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		// dp^T = (key_size, query_size), Q = (query_size, embed_dim)
 		for(unsigned int dp_col = 0; dp_col < key_size; dp_col++) {
 			for(unsigned int q_col = 0; q_col < embed_dim; q_col++) {
@@ -239,13 +235,10 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 			
 
 	}
-
-	for(unsigned int i = 0; i < num_el_query; i++) {
-
-		out_dQ[tid.y * num_el_query + i] = dQ[i];
-
-
-	}
+	
+	
+	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+	for(unsigned int i = 0; i < num_el_query; i++) out_dQ[tid.y * num_el_query + i] = dQ[i];
 
 
 

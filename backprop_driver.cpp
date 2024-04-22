@@ -104,8 +104,11 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 	const unsigned int n_embed = 96;
 	const unsigned int N_seq = 1024;
 	
-	auto attn_scores = torch::matmul(query, key.transpose(-1, -2)) / std::sqrt(n_embed);
-
+	auto mask = torch::tril(torch::ones({1,1,1024, 1024}, torch::kBool).to(torch::kMPS), 0).to(torch::kMPS);
+	auto attn_scores = (torch::matmul(query, key.transpose(-1, -2)) / std::sqrt(n_embed));
+	attn_scores = torch::where(mask, attn_scores, torch::full({1, 1, 1024, 1024}, -INFINITY).to(torch::kMPS));
+	
+	
     	auto max_value_tuple = torch::max(attn_scores, -1);
 	torch::Tensor max_values = std::get<0>(max_value_tuple); 
     	//std::cout << max_values << std::endl;	
@@ -113,24 +116,19 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 	auto exp_attn = torch::exp(attn_scores - max_values);
 	auto row_sums = torch::sum(exp_attn, -1);
 //	std::cout << row_sums.sizes() << max_values.sizes()<< std::endl;
-	
+
 	auto P = torch::softmax(attn_scores, -1);
 	auto dP = torch::matmul(dO, value.transpose(-1, -2));
 	auto dS = torch::mul(P, dP - torch::sum(torch::mul(dP, P), -1, true));
-//	auto dK = torch::matmul(dS.transpose(-1, -2), query);
+
+	auto dK = torch::matmul(dS.transpose(-1, -2), query);
 	auto dQ = torch::matmul(dS, key);
+
 	std::cout << dQ << "\n\n\n\n\n\n\n\n\n\n\n\n\n";
 
- //   	auto attn_probs = torch::softmax(attn_scores, -1);
-	
-//	auto naive_dV = torch::matmul(attn_probs.transpose(-1, -2), dO);
-//	std::cout << naive_dV;	
-	// output tensor initialised to all zeros
-	torch::Tensor out = torch::zeros({1,1,1024,1024}).to(torch::kMPS);
-//	std::cout << exp_attn << std::endl << std::endl;
-//	std::cout << torch::sum(attn_probs, -1) << std::endl;
-//	std::cout << naive_dV << "\n\n\n\n";
-	return  FlashMPSDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sums, max_values);
+	torch::Tensor out = torch::matmul(P, value);
+
+	return FlashMPSDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sums, max_values);
 
 
 }
