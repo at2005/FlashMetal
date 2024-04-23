@@ -50,9 +50,9 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	unsigned int elements_to_copy = num_el_query; 
 	
 	for(unsigned int i = 0; i < elements_to_copy; i++) {
-		QUERY_LOCAL[i] = query[tid.y * elements_to_copy + i];
-		dO_LOCAL[i] = dO[tid.y * elements_to_copy + i];
-		O_LOCAL[i] = out[tid.y * elements_to_copy + i];
+		QUERY_LOCAL[i] = query[batch_index + head_index + tid.y * elements_to_copy + i];
+		dO_LOCAL[i] = dO[batch_index + head_index + tid.y * elements_to_copy + i];
+		O_LOCAL[i] = out[batch_index + head_index + tid.y * elements_to_copy + i];
 		dQ[i] = 0.0;
 	}
 
@@ -104,7 +104,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 				
 				// each query vector adds another row to the output attention scores
 				OUTPUT_LOCAL[i*query_size + j] = total_dot / dim_factor;				
-				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[tid.y * query_size + i]) / ROW_SUMS[row_val_offset + i];
+				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[batch_index + head_index + tid.y * query_size + i]) / ROW_SUMS[row_val_offset + i];
 
 			//	out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
 
@@ -159,7 +159,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		}
 		
 		// now we want to copy this to an output tensor
-		for(unsigned int i = 0; i < num_el; i++) out_dV[k*dV_elements + tid.y * num_el + i] = dKV_acc[tid.y * num_el + i];
+		for(unsigned int i = 0; i < num_el; i++) out_dV[batch_index + head_index + k*dV_elements + tid.y * num_el + i] = dKV_acc[tid.y * num_el + i];
 
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		
@@ -231,14 +231,14 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 		}
 			
 					
-		for(unsigned int i = 0; i < num_el; i++) out_dK[k*dV_elements + tid.y * num_el + i] = dKV_acc[tid.y * num_el + i];
+		for(unsigned int i = 0; i < num_el; i++) out_dK[batch_index + head_index + k*dV_elements + tid.y * num_el + i] = dKV_acc[tid.y * num_el + i];
 			
 
 	}
 	
 	
 	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
-	for(unsigned int i = 0; i < num_el_query; i++) out_dQ[tid.y * num_el_query + i] = dQ[i];
+	for(unsigned int i = 0; i < num_el_query; i++) out_dQ[batch_index + head_index + tid.y * num_el_query + i] = dQ[i];
 
 
 

@@ -97,50 +97,55 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	return out_dQ;
 }
 
-torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& dO, torch::Tensor& out_dQ, torch::Tensor& out_dK, torch::Tensor& out_dV) {
+torch::Tensor FlashBackMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& dO, torch::Tensor& row_sums, torch::Tensor& max_values) {
 	// PARAMETERS
 	const unsigned int batch_size = 1;
-	const unsigned int num_heads = 1;
+	const unsigned int num_heads = 16;
 	const unsigned int n_embed = 96;
 	const unsigned int N_seq = 1024;
 	
-	auto mask = torch::tril(torch::ones({1,1,1024, 1024}, torch::kBool).to(torch::kMPS), 0).to(torch::kMPS);
+
+	torch::Tensor out_dQ = torch::zeros({1,16,1024, 96}).to(torch::kMPS);
+	torch::Tensor out_dK = torch::zeros({1,16,1024, 96}).to(torch::kMPS);
+	torch::Tensor out_dV = torch::zeros({1,16,1024, 96}).to(torch::kMPS);
+
+	auto mask = torch::tril(torch::ones({1,16,1024, 1024}, torch::kBool).to(torch::kMPS), 0).to(torch::kMPS);
 	auto attn_scores = (torch::matmul(query, key.transpose(-1, -2)) / std::sqrt(n_embed));
-	attn_scores = torch::where(mask, attn_scores, torch::full({1, 1, 1024, 1024}, -INFINITY).to(torch::kMPS));
+	attn_scores = torch::where(mask, attn_scores, torch::full({1, 16, 1024, 1024}, -INFINITY).to(torch::kMPS));
 	
 	
-    	auto max_value_tuple = torch::max(attn_scores, -1);
+/*for testing purposes    	auto max_value_tuple = torch::max(attn_scores, -1);
 	torch::Tensor max_values = std::get<0>(max_value_tuple); 
     	//std::cout << max_values << std::endl;	
 	max_values = max_values.unsqueeze(-1);	
 	auto exp_attn = torch::exp(attn_scores - max_values);
 	auto row_sums = torch::sum(exp_attn, -1);
-//	std::cout << row_sums.sizes() << max_values.sizes()<< std::endl;
 
-	auto P = torch::softmax(attn_scores, -1);
+ For testing purposes:	auto P = torch::softmax(attn_scores, -1);
 	auto dP = torch::matmul(dO, value.transpose(-1, -2));
 	auto dS = torch::mul(P, dP - torch::sum(torch::mul(dP, P), -1, true));
 
 	auto dK = torch::matmul(dS.transpose(-1, -2), query);
 	auto dQ = torch::matmul(dS, key);
 
-	std::cout << dQ << "\n\n\n\n\n\n\n\n\n\n\n\n\n";
+//	std::cout << dQ << "\n\n\n\n\n\n\n\n\n\n\n\n\n";
 
 	torch::Tensor out = torch::matmul(P, value);
+*/
 
-	return FlashMPSDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sums, max_values);
-
+	auto res_metal = FlashMPSDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sums, max_values);
+	return res_metal;
 
 }
 
+
+
+/*
 int main() {
-	torch::Tensor query = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
-	torch::Tensor key = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
-	torch::Tensor value = torch::randn({1, 1, 1024, 96}).to(torch::kMPS); 
-	torch::Tensor dO = torch::randn({1,1, 1024, 96}).to(torch::kMPS);
-	torch::Tensor out_dQ = torch::zeros({1,1,1024, 96}).to(torch::kMPS);
-	torch::Tensor out_dK = torch::zeros({1,1,1024, 96}).to(torch::kMPS);
-	torch::Tensor out_dV = torch::zeros({1,1,1024, 96}).to(torch::kMPS);
+	torch::Tensor query = torch::randn({1, 16, 1024, 96}).to(torch::kMPS); 
+	torch::Tensor key = torch::randn({1, 16, 1024, 96}).to(torch::kMPS); 
+	torch::Tensor value = torch::randn({1, 16, 1024, 96}).to(torch::kMPS); 
+	torch::Tensor dO = torch::randn({1,16, 1024, 96}).to(torch::kMPS);
 	
 //	std::cout << out_dV << std::endl;
 
@@ -151,6 +156,6 @@ int main() {
 	
 
 }
-
+*/
 
 	
