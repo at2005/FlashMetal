@@ -27,7 +27,7 @@ std::string ReadMetalFile() {
 
 }
 
-torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out) {
+torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& row_max, torch::Tensor& row_sum) {
 	
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
@@ -76,6 +76,8 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	encoder->setBuffer(CONVERT_MTL(key), key.storage_offset(), 1);
 	encoder->setBuffer(CONVERT_MTL(value), value.storage_offset(), 2);
 	encoder->setBuffer(CONVERT_MTL(out), out.storage_offset(), 3); 
+	encoder->setBuffer(CONVERT_MTL(row_max), out.storage_offset(), 4); 
+	encoder->setBuffer(CONVERT_MTL(row_sum), out.storage_offset(), 5); 
 	
 
 	// setting threads and threadgroup sizes
@@ -112,8 +114,10 @@ torch::Tensor FlashAttentionMPS(torch::Tensor& query, torch::Tensor& key, torch:
 
 	// output tensor initialised to all zeros
 	torch::Tensor out = torch::empty_like(value).to(torch::kMPS);
+	torch::Tensor row_max = torch::empty({batch_size, num_heads, N_seq});
+	torch::Tensor row_sum = torch::empty({batch_size, num_heads, N_seq});
 	
-	return FlashMPSDispatch(query, key, value, out); 
+	return FlashMPSDispatch(query, key, value, out, row_max, row_sum); 
 
 
 }

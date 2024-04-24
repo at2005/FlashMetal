@@ -1,11 +1,12 @@
 xcrun -sdk macosx metal -o flashback.ir  -c flashback.metal;
 xcrun -sdk macosx metallib -o flashback.metallib flashback.ir;
 g++ -std=c++17 -O3 -DTORCH_EXTENSION_NAME=FlashBack $(python -m pybind11 --includes) \
+backprop_driver.cpp \
 -I/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/include \
 -I/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/include/torch/csrc/api/include \
 -I ~/metal-cpp \
 -L/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/lib \
 -Wl,-rpath,/opt/homebrew/Caskroom/miniforge/base/envs/mlp/lib/python3.8/site-packages/torch/lib \
 -lc10 -ltorch -ltorch_cpu -framework Foundation -framework QuartzCore -framework Metal \
--o FlashBack \
-backprop_driver.cpp
+-Wl,-undefined,dynamic_lookup \
+-o FlashBack`python3-config --extension-suffix`

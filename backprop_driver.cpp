@@ -13,7 +13,7 @@
 
 #define CONVERT_MTL(input_tensor) ((MTL::Buffer*)(input_tensor.storage().data()))
 
-torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& dO, torch::Tensor& out_dQ, torch::Tensor& out_dK, torch::Tensor& out_dV, torch::Tensor& row_sums, torch::Tensor& row_max_vals) {
+std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& dO, torch::Tensor& out_dQ, torch::Tensor& out_dK, torch::Tensor& out_dV, torch::Tensor& row_sums, torch::Tensor& row_max_vals) {
 	
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
@@ -97,10 +97,10 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 	return {out_dQ, out_dK, out_dV};
 }
 
-torch::Tensor FlashBackMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& dO, torch::Tensor& row_sums, torch::Tensor& max_values) {
-	torch::Tensor out_dQ = torch::zeros_like(dQ).to(torch::kMPS);
-	torch::Tensor out_dK = torch::zeros_like(dK).to(torch::kMPS);
-	torch::Tensor out_dV = torch::zeros_like(dV).to(torch::kMPS);
+std::vector<torch::Tensor> FlashBackMPS(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& dO, torch::Tensor& row_sums, torch::Tensor& max_values) {
+	torch::Tensor out_dQ = torch::zeros_like(query).to(torch::kMPS);
+	torch::Tensor out_dK = torch::zeros_like(key).to(torch::kMPS);
+	torch::Tensor out_dV = torch::zeros_like(value).to(torch::kMPS);
 
 	auto res_metal = FlashMPSDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sums, max_values);
 	return res_metal;

@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 
 kernel void attention(const device float* query[[buffer(0)]], const device float* key[[buffer(1)]], const device float* value[[buffer(2)]], 
-device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) 
+device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], device float* ROW_SUM_GLOBAL [[buffer(5)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) 
 
 
 { 
@@ -49,10 +49,11 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 
 	unsigned int elements_key_copy = (key_size * key_size * embed_dim) / seq_len;
 	
+	threadgroup float KEY_SRAM[key_size * embed_dim];
+	threadgroup float VALUE_SRAM[key_size * embed_dim];
+	
 	// iterate over each key block and compute attention scores
 	for(unsigned int k = 0; k < num_keys; k++) {
-		threadgroup float KEY_SRAM[key_size * embed_dim];
-		threadgroup float VALUE_SRAM[key_size * embed_dim];
 		// copy values from HBM, each thread copies a little bit of the shared key/value tensor
 		for(unsigned int _ = 0; _ < elements_key_copy; _++) {
 			KEY_SRAM[tid.y * elements_key_copy + _] = key[(tgid.y * num_values_batch) + (tgid.x * num_values_head) + (k*key_size*embed_dim) + (tid.y * elements_key_copy) +  _]; 
@@ -150,6 +151,12 @@ device float* out [[buffer(3)]], uint2 gid [[thread_position_in_grid]], uint2 ti
 		}
 
 
+	}
+
+
+	for(unsigned int i = 0; i < query_size; i++) {
+		ROW_MAX_GLOBAL[tgid.y*num_values_batch + tgid.x*num_values_head + tid.y * query_size + i] = ROW_MAX[i];
+		ROW_SUM_GLOBAL[tgid.y*num_values_batch + tgid.x*num_values_head + tid.y * query_size + i] = ROW_SUM[i];
 	}
 
 
