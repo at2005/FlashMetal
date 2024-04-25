@@ -14,7 +14,7 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
 	
-	const unsigned int num_heads = 1;
+	const unsigned int num_heads = 4;
 
 	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
 	const unsigned int num_values_head = seq_len * embed_dim;
@@ -152,11 +152,13 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 
 	}
-
-
+	
+	
+	const unsigned int num_values_batch_row = seq_len * num_heads;
 	for(unsigned int i = 0; i < query_size; i++) {
-		ROW_MAX_GLOBAL[tgid.y*num_values_batch + tgid.x*num_values_head + tid.y * query_size + i] = ROW_MAX[i];
-		ROW_SUM_GLOBAL[tgid.y*num_values_batch + tgid.x*num_values_head + tid.y * query_size + i] = ROW_SUM[i];
+		ROW_MAX_GLOBAL[(tgid.y*num_values_batch_row) + (tgid.x*seq_len) + (tid.y * query_size) + i] = ROW_MAX[i];
+		ROW_SUM_GLOBAL[(tgid.y*num_values_batch_row) + (tgid.x*seq_len) + (tid.y * query_size) + i] = ROW_SUM[i];
+
 	}
 
 

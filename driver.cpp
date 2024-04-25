@@ -15,19 +15,7 @@
 
 #define CONVERT_MTL(input_tensor) ((MTL::Buffer*)(input_tensor.storage().data()))
 
-std::string ReadMetalFile() {
-	
-        std::ifstream shader_file("flash.metal");
-        std::stringstream text_buffer;
-        text_buffer << shader_file.rdbuf();
-	
-	std::string temp_str = text_buffer.str();
-        return temp_str; 
-	
-
-}
-
-torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& row_max, torch::Tensor& row_sum) {
+std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& row_max, torch::Tensor& row_sum) {
 	
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
@@ -102,7 +90,7 @@ torch::Tensor& FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch:
 		
 	dev->release();
 	
-	return out;
+	return {out, row_max, row_sum};
 }
 
 
@@ -137,13 +125,13 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 	unsigned int Q_BLOCK_SIZE = 8; 
 	unsigned int K_BLOCK_SIZE = 8;
 
-	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
-	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
+//	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
+//	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
 
 	// PARAMETERS END
 	// load function from metal shader file
 	MTL::Function* kernelFunc = library->newFunction(NS::String::string("backprop_attention", NS::UTF8StringEncoding));
-	std::cout << kernelFunc << std::endl;
+//	std::cout << kernelFunc << std::endl;
 	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
 		
 
@@ -171,7 +159,7 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 	MTL::Size threadgroup_per_grid;
 
 	threads_threadgroup.height = N_seq / Q_BLOCK_SIZE;
-	std::cout << N_seq / Q_BLOCK_SIZE;
+//	std::cout << N_seq / Q_BLOCK_SIZE;
 	threads_threadgroup.width = 1;
 	threads_threadgroup.depth = 1;
 
@@ -191,19 +179,22 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 	
 	return {out_dQ, out_dK, out_dV};
 }
-
+/*
 
 class FlashAttentionAutograd : public torch::autograd::Function<FlashAttentionAutograd> {
 	public:
 		static torch::autograd::variable_list forward(torch::autograd::AutogradContext* ctx, torch::Tensor& query, torch::Tensor& key, torch::Tensor& value) {
 			// PARAMETERS
-			const unsigned int batch_size =1;// 64;
-			const unsigned int num_heads = 1;//16;
-			const unsigned int n_embed = 96;
-			const unsigned int N_seq = 1024;
+
+			c10::IntArrayRef shape = query.sizes();
+
+			const unsigned int batch_size = shape[0];// 64;
+			const unsigned int num_heads = shape[1];
+			const unsigned int N_seq = shape[2];
+			const unsigned int n_embed = shape[3];
 
 			// output tensor initialised to all zeros
-			torch::Tensor out = torch::empty_like(value).to(torch::kMPS);
+			torch::Tensor out = torch::empty_like(value, torch::requires_grad()).to(torch::kMPS);
 			torch::Tensor row_max = torch::empty({batch_size, num_heads, N_seq}).to(torch::kMPS);
 			torch::Tensor row_sum = torch::empty({batch_size, num_heads, N_seq}).to(torch::kMPS);
 			
@@ -234,7 +225,7 @@ class FlashAttentionAutograd : public torch::autograd::Function<FlashAttentionAu
 
 			auto res_metal = FlashBackDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sum, row_max);
 
-			return res_metal;
+			return {res_metal[0], res_metal[1], res_metal[2]};
 
 		
 		}
@@ -244,9 +235,18 @@ class FlashAttentionAutograd : public torch::autograd::Function<FlashAttentionAu
 torch::Tensor flash_forward(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value) {
    return FlashAttentionAutograd::apply(query, key, value)[0];
 }
+*/
 
+/*
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("FlashAttentionMPS", &flash_forward, "Flash attention apply");
+}
+*/
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("FlashAttentionMPS", &flash_forward, "Flash attention forward pass");
+    m.def("FlashAttentionForward", &FlashMPSDispatch, "Flash attention apply");
+    m.def("FlashAttentionBackward", &FlashBackDispatch, "Flash attention apply");
 }
+
+
 

@@ -12,7 +12,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	const unsigned int embed_dim = 96;
 	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
-	const unsigned int num_heads = 16;
+	const unsigned int num_heads = 4;
 
 	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
 	const unsigned int num_values_head = seq_len * embed_dim;
@@ -104,7 +104,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 				
 				// each query vector adds another row to the output attention scores
 				OUTPUT_LOCAL[i*query_size + j] = total_dot / dim_factor;				
-				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[batch_index + head_index + tid.y * query_size + i]) / ROW_SUMS[row_val_offset + i];
+				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[row_val_offset + i]) / ROW_SUMS[row_val_offset + i];
 
 			//	out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
 
@@ -185,7 +185,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 			
 			for(unsigned int i = 0; i < key_size; i++) {
 				dP[o_row*key_size + i] -= total_acc;
-				dP[o_row*key_size + i] *= (OUTPUT_LOCAL[o_row * query_size + i]);// * 1/dim_factor; 
+				dP[o_row*key_size + i] *= (OUTPUT_LOCAL[o_row * query_size + i]); //* (1/dim_factor); 
 				
 			}
 		}
