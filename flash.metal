@@ -14,7 +14,7 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
 	
-	const unsigned int num_heads = 16;
+	const unsigned int num_heads = 1;
 
 	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
 	const unsigned int num_values_head = seq_len * embed_dim;
