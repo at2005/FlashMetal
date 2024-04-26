@@ -22,7 +22,6 @@ std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor&
 	
 	// print out GPU metadata
 	// create command queue where we will dispatch our jobs
-	MTL::CommandQueue* cmd_queue = dev->newCommandQueue();
 	
 	NS::Error* err = nullptr;
 	NS::String* filePath = NS::String::alloc()->string("flash.metallib", NS::StringEncoding::ASCIIStringEncoding);
@@ -102,7 +101,6 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
 	// print out GPU metadata
 	// create command queue where we will dispatch our jobs
-	MTL::CommandQueue* cmd_queue = dev->newCommandQueue();
 	
 	NS::Error* err = nullptr;
 	NS::String* filePath = NS::String::alloc()->string("flashback.metallib", NS::StringEncoding::ASCIIStringEncoding);
@@ -136,6 +134,7 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 		
 
 	
+	torch::mps::synchronize();
 	// command queue and command buffer are where we send our jobs
 	auto commandQueue = torch::mps::get_dispatch_queue();
 	MTL::CommandBuffer* commandBuffer = (MTL::CommandBuffer*)(torch::mps::get_command_buffer());
