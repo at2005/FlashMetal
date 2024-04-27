@@ -15,7 +15,7 @@
 
 #define CONVERT_MTL(input_tensor) ((MTL::Buffer*)(input_tensor.storage().data()))
 
-std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& row_max, torch::Tensor& row_sum) {
+std::vector<void*> fetch_pipeline() {
 	
 	// create metal device
 	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
@@ -24,14 +24,27 @@ std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor&
 	// create command queue where we will dispatch our jobs
 	
 	NS::Error* err = nullptr;
-	NS::String* filePath = NS::String::alloc()->string("flash.metallib", NS::StringEncoding::ASCIIStringEncoding);
-	MTL::Library* library = dev->newLibrary(filePath, NULL);	
+	NS::String* filePathForward = NS::String::alloc()->string("flash.metallib", NS::StringEncoding::ASCIIStringEncoding);
+	MTL::Library* libraryForward = dev->newLibrary(filePathForward, NULL);	
+		
+	MTL::Function* kernelFuncForward = libraryForward->newFunction(NS::String::string("attention", NS::UTF8StringEncoding));
+	MTL::ComputePipelineState* pipelineForward = dev->newComputePipelineState(kernelFuncForward, &err);
+	
 
-	if(library == nullptr) {
-		 __builtin_printf( "%s", err->localizedDescription()->utf8String() );
+	NS::String* filePathBackward = NS::String::alloc()->string("flashback.metallib", NS::StringEncoding::ASCIIStringEncoding);
+	MTL::Library* libraryBackward = dev->newLibrary(filePathBackward, NULL);	
+		
+	MTL::Function* kernelFuncBackward = libraryBackward->newFunction(NS::String::string("backprop_attention", NS::UTF8StringEncoding));
+	MTL::ComputePipelineState* pipelineBackward = dev->newComputePipelineState(kernelFuncBackward, &err);
 
-	}
+	return {(void*)pipelineForward, (void*)pipelineBackward};
+}
 
+
+
+std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& row_max, torch::Tensor& row_sum, 
+void* pip) {
+	
 	c10::IntArrayRef shape = query.sizes();
 	unsigned int batch_size = shape[0];
 	unsigned int num_heads = shape[1];
@@ -45,17 +58,12 @@ std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor&
 
 //	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
 //	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
-
-	// PARAMETERS END
-	// load function from metal shader file
-	MTL::Function* kernelFunc = library->newFunction(NS::String::string("attention", NS::UTF8StringEncoding));
-	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
-	
-
 	
 	// command queue and command buffer are where we send our jobs
-	auto commandQueue = torch::mps::get_dispatch_queue();
-	MTL::CommandBuffer* commandBuffer = (MTL::CommandBuffer*)(torch::mps::get_command_buffer());
+	
+	MTL::ComputePipelineState* pipeline = (MTL::ComputePipelineState*)pip;
+
+	MTL::CommandBuffer* commandBuffer = (MTL::CommandBuffer*)(torch::mps::get_command_buffer()); 
 	MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
 	encoder->setComputePipelineState(pipeline);
 
@@ -87,7 +95,7 @@ std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor&
 	torch::mps::commit();
 	torch::mps::synchronize();
 		
-	dev->release();
+//	dev->release();
 	
 	return {out, row_max, row_sum};
 }
@@ -95,23 +103,8 @@ std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor&
 
 
 
-std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& dO, torch::Tensor& out_dQ, torch::Tensor& out_dK, torch::Tensor& out_dV, torch::Tensor& row_sums, torch::Tensor& row_max_vals) {
+std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value, torch::Tensor& out, torch::Tensor& dO, torch::Tensor& out_dQ, torch::Tensor& out_dK, torch::Tensor& out_dV, torch::Tensor& row_sums, torch::Tensor& row_max_vals, void* pip) {
 	
-	// create metal device
-	MTL::Device* dev = MTL::CreateSystemDefaultDevice();
-	// print out GPU metadata
-	// create command queue where we will dispatch our jobs
-	
-	NS::Error* err = nullptr;
-	NS::String* filePath = NS::String::alloc()->string("flashback.metallib", NS::StringEncoding::ASCIIStringEncoding);
-	
-	MTL::Library* library = dev->newLibrary(filePath, NULL);	
-
-	if(library == nullptr) {
-		 __builtin_printf( "%s", err->localizedDescription()->utf8String() );
-
-	}
-
 	c10::IntArrayRef shape = query.sizes();
 	unsigned int batch_size = shape[0];
 	unsigned int num_heads = shape[1];
@@ -123,21 +116,12 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 	unsigned int Q_BLOCK_SIZE = 8; 
 	unsigned int K_BLOCK_SIZE = 8;
 
-//	std::cout << "NUM_THREADS: " << (float)((float)N_seq / (float)Q_BLOCK_SIZE) << std::endl;
-//	std::cout << "VALUES_TO_COPY: " << (float)((float)(K_BLOCK_SIZE * K_BLOCK_SIZE * n_embed) / (float)N_seq) << std::endl;
-
-	// PARAMETERS END
-	// load function from metal shader file
-	MTL::Function* kernelFunc = library->newFunction(NS::String::string("backprop_attention", NS::UTF8StringEncoding));
-//	std::cout << kernelFunc << std::endl;
-	MTL::ComputePipelineState* pipeline= dev->newComputePipelineState(kernelFunc, &err);
-		
-
-	
 	torch::mps::synchronize();
 	// command queue and command buffer are where we send our jobs
-	auto commandQueue = torch::mps::get_dispatch_queue();
-	MTL::CommandBuffer* commandBuffer = (MTL::CommandBuffer*)(torch::mps::get_command_buffer());
+	
+	MTL::ComputePipelineState* pipeline = (MTL::ComputePipelineState*)pip;
+
+	MTL::CommandBuffer* commandBuffer = (MTL::CommandBuffer*)(torch::mps::get_command_buffer()); 
 	MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
 	encoder->setComputePipelineState(pipeline);
 
@@ -174,75 +158,15 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 	torch::mps::commit();
 	torch::mps::synchronize();
 		
-	dev->release();
+//	dev->release();
 	
 	return {out_dQ, out_dK, out_dV};
 }
-/*
 
-class FlashAttentionAutograd : public torch::autograd::Function<FlashAttentionAutograd> {
-	public:
-		static torch::autograd::variable_list forward(torch::autograd::AutogradContext* ctx, torch::Tensor& query, torch::Tensor& key, torch::Tensor& value) {
-			// PARAMETERS
 
-			c10::IntArrayRef shape = query.sizes();
-
-			const unsigned int batch_size = shape[0];// 64;
-			const unsigned int num_heads = shape[1];
-			const unsigned int N_seq = shape[2];
-			const unsigned int n_embed = shape[3];
-
-			// output tensor initialised to all zeros
-			torch::Tensor out = torch::empty_like(value, torch::requires_grad()).to(torch::kMPS);
-			torch::Tensor row_max = torch::empty({batch_size, num_heads, N_seq}).to(torch::kMPS);
-			torch::Tensor row_sum = torch::empty({batch_size, num_heads, N_seq}).to(torch::kMPS);
-			
-
-		 	out = FlashMPSDispatch(query, key, value, out, row_max, row_sum); 
-
-			ctx->save_for_backward({query, key, value, out, row_max, row_sum});
-			
-			return {out};
-
-		}
-
-		static torch::autograd::variable_list backward(torch::autograd::AutogradContext *ctx, torch::autograd::variable_list grad_output) {
-			auto saved_ctx = ctx->get_saved_variables();	
-			auto query = saved_ctx[0];
-			auto key = saved_ctx[1];
-			auto value = saved_ctx[2];
-			auto out = saved_ctx[3];
-			auto row_max = saved_ctx[4];
-			auto row_sum = saved_ctx[5];
-			
-
-			torch::Tensor out_dQ = torch::zeros_like(query).to(torch::kMPS);
-			torch::Tensor out_dK = torch::zeros_like(key).to(torch::kMPS);
-			torch::Tensor out_dV = torch::zeros_like(value).to(torch::kMPS);
-			
-			auto dO = grad_output[0];
-
-			auto res_metal = FlashBackDispatch(query, key, value, out, dO, out_dQ, out_dK,  out_dV, row_sum, row_max);
-
-			return {res_metal[0], res_metal[1], res_metal[2]};
-
-		
-		}
-
-};
-
-torch::Tensor flash_forward(torch::Tensor& query, torch::Tensor& key, torch::Tensor& value) {
-   return FlashAttentionAutograd::apply(query, key, value)[0];
-}
-*/
-
-/*
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("FlashAttentionMPS", &flash_forward, "Flash attention apply");
-}
-*/
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("fetchPipeline", &fetch_pipeline, "fetches pipeline");
     m.def("FlashAttentionForward", &FlashMPSDispatch, "Flash attention apply");
     m.def("FlashAttentionBackward", &FlashBackDispatch, "Flash attention apply");
 }

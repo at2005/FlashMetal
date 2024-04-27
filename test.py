@@ -2,7 +2,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from math import sqrt
-from FlashMetal import FlashAttentionForward, FlashAttentionBackward
+from FlashMetal import FlashAttentionForward, FlashAttentionBackward, fetchPipeline
+
+forward_pip, backward_pip = fetchPipeline()
 
 
 n_embed = 384
@@ -43,7 +45,7 @@ class FlashAttentionAutograd(torch.autograd.Function):
         row_max = torch.empty((batch_size, num_heads, N_seq), device='mps')
         row_sum = torch.empty((batch_size, num_heads, N_seq), device='mps')
 
-        out, row_max, row_sum =  FlashAttentionForward(query, key, value, out, row_max, row_sum)
+        out, row_max, row_sum =  FlashAttentionForward(query, key, value, out, row_max, row_sum, forward_pip)
         
         ctx.save_for_backward(query, key, value, out, row_max, row_sum)
         return out
@@ -55,18 +57,20 @@ class FlashAttentionAutograd(torch.autograd.Function):
         out_dQ = torch.zeros_like(query, device='mps')
         out_dK = torch.zeros_like(key, device='mps')
         out_dV = torch.zeros_like(value, device='mps')
-        res_metal = FlashAttentionBackward(query, key, value, out, grad_output, out_dQ, out_dK, out_dV, row_sum, row_max)
+        res_metal = FlashAttentionBackward(query, key, value, out, grad_output, out_dQ, out_dK, out_dV, row_sum, row_max, backward_pip)
         grad_query, grad_key, grad_value = res_metal
         return grad_query, grad_key, grad_value
 
 
 out = FlashAttentionAutograd.apply(q,k,v)
-diff = out - o_test
-print(diff)
+#print(out)
+#diff = out - o_test
 
-#loss = torch.mean(out)
-#loss.backward()
-#print(q.grad)
+#print(diff)
+
+loss = torch.mean(out)
+loss.backward()
+print(q.grad)
 
 class MHAttention(nn.Module):
     def __init__(self):
