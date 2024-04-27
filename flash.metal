@@ -141,12 +141,15 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 				
 
 				// multiply to cancel out the previous incorrect row sums
-				out[outmat_i] *= ROW_SUM[att_row];
+				float output_val_read = out[outmat_i];
+				output_val_read *= ROW_SUM[att_row];
 				// multiply by e^old_max to cancel and -e to include new max	
-				out[outmat_i] *= metal::exp(ROW_MAX[att_row] - rowmax_new);
+				output_val_read *= metal::exp(ROW_MAX[att_row] - rowmax_new);
 				// add new score value to SV dot product
-				out[outmat_i] += metal::exp(ROW_MAX_LOCAL[att_row] - rowmax_new) * val_dot;
-				out[outmat_i] /= sum_divisor;
+				output_val_read += metal::exp(ROW_MAX_LOCAL[att_row] - rowmax_new) * val_dot;
+				output_val_read /= sum_divisor;	
+				
+				out[outmat_i] = output_val_read;
 
 			}
 			
