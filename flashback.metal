@@ -12,7 +12,7 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 	const unsigned int embed_dim = 96;
 	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
-	const unsigned int num_heads = 4;
+	const unsigned int num_heads = 8;
 
 	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
 	const unsigned int num_values_head = seq_len * embed_dim;
@@ -106,14 +106,14 @@ device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* o
 				OUTPUT_LOCAL[i*query_size + j] = total_dot / dim_factor;				
 				OUTPUT_LOCAL[i*query_size + j] = metal::exp(OUTPUT_LOCAL[i*query_size + j] - ROW_MAX_VALS[row_val_offset + i]) / ROW_SUMS[row_val_offset + i];
 
-			//	out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
+//				out[(tid.y * query_size + i) * seq_len + k*key_size + j] = OUTPUT_LOCAL[i*query_size + j];
+				
 
 			}
 
 		}
 		
 		threadgroup_barrier(metal::mem_flags::mem_threadgroup);
-			
 		// compute dV_part = P^T dO
 		// == each column of OUTPUT_LOCAL dotted with each row of dO_LOCAL
 

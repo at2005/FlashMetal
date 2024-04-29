@@ -8,7 +8,7 @@ forward_pip, backward_pip = fetchPipeline()
 
 
 n_embed = 384
-n_heads = 4
+n_heads = 1
 
 
 q = torch.randn(2,n_heads,1024, 96,  requires_grad=True, device="mps")
@@ -63,14 +63,14 @@ class FlashAttentionAutograd(torch.autograd.Function):
 
 
 out = FlashAttentionAutograd.apply(q,k,v)
-#print(out)
+print(out)
 #diff = out - o_test
 
 #print(diff)
 
 loss = torch.mean(out)
 loss.backward()
-print(q.grad)
+#print(q.grad)
 
 class MHAttention(nn.Module):
     def __init__(self):

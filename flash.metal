@@ -8,13 +8,13 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 	// we will deal with a single query, and multiple keys through a loop. But first we gotta copy part of the keys to SRAM
 
-	const unsigned int query_size = 8;
-	const unsigned int key_size = 8;
+	const unsigned int query_size = 32;
+	const unsigned int key_size = 32;
 	const unsigned int embed_dim = 96;
 	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
 	
-	const unsigned int num_heads = 4;
+	const unsigned int num_heads = 8;
 
 	const unsigned int num_values_batch = num_heads * seq_len * embed_dim;
 	const unsigned int num_values_head = seq_len * embed_dim;
@@ -35,6 +35,9 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 	unsigned int elements_to_copy = query_size * embed_dim;
 	unsigned int qsram_index = batch_index + head_index + tid.y * elements_to_copy;
 
+	threadgroup float KEY_SRAM[key_size * embed_dim];
+	threadgroup float VALUE_SRAM[key_size * embed_dim];
+
 	float ROW_SUM[query_size];
 	float ROW_MAX[query_size];
 
@@ -54,8 +57,6 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 	unsigned int elements_key_copy = (key_size * key_size * embed_dim) / seq_len;
 	
-	threadgroup float KEY_SRAM[key_size * embed_dim];
-	threadgroup float VALUE_SRAM[key_size * embed_dim];
 	
 	unsigned int ksram_index = tid.y * elements_key_copy;
 
@@ -93,12 +94,13 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 				// each query vector adds another row to the output attention scores
 				total_dot /= dim_factor;
 				if(total_dot > ROW_MAX_LOCAL[i]) ROW_MAX_LOCAL[i] = total_dot;
-				OUTPUT_SRAM[i*query_size + j] = total_dot;				
+				OUTPUT_SRAM[i*key_size + j] = total_dot;				
 
 			}
 
 		}
 
+	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 			
 		float ROW_SUM_NEW[query_size];
 		// calculating row_sums and exponentiating with maximum
@@ -121,6 +123,7 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 		}
 		
 		
+	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		// computing value dot attention scores
 		// so, basically, iterate over each row in attention scores, for us that is reduced seq dimension
 		for(unsigned int att_row = 0; att_row < query_size; att_row++) {
@@ -135,21 +138,21 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 				float val_dot = 0.0;
 				// dot prod computation
-				for(unsigned int el = 0; el < query_size; el++) {
-					val_dot += OUTPUT_SRAM[(att_row * query_size) + el] * VALUE_SRAM[val_col + (el*embed_dim)];//* VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
+				for(unsigned int el = 0; el < key_size; el++) {
+					val_dot += OUTPUT_SRAM[(att_row * key_size) + el] * VALUE_SRAM[val_col + (el*embed_dim)];//* VALUE_SRAM[(k*key_size*embed_dim) + val_col + (el*embed_dim)];
 				}
 				
 
+				float output_store = out[outmat_i];
+
 				// multiply to cancel out the previous incorrect row sums
-				float output_val_read = out[outmat_i];
-				output_val_read *= ROW_SUM[att_row];
+				output_store *= ROW_SUM[att_row];
 				// multiply by e^old_max to cancel and -e to include new max	
-				output_val_read *= metal::exp(ROW_MAX[att_row] - rowmax_new);
+				output_store *= metal::exp(ROW_MAX[att_row] - rowmax_new);
 				// add new score value to SV dot product
-				output_val_read += metal::exp(ROW_MAX_LOCAL[att_row] - rowmax_new) * val_dot;
-				output_val_read /= sum_divisor;	
-				
-				out[outmat_i] = output_val_read;
+				output_store += metal::exp(ROW_MAX_LOCAL[att_row] - rowmax_new) * val_dot;
+				output_store /= sum_divisor;
+				out[outmat_i] = output_store;
 
 			}
 			
@@ -164,7 +167,8 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 	}
 	
-	
+		
+	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 	const unsigned int num_values_batch_row = seq_len * num_heads;
 	const unsigned int row_value_cp_idx = (tgid.y*num_values_batch_row) + (tgid.x*seq_len) + (tid.y * query_size); 
 	for(unsigned int i = 0; i < query_size; i++) {
@@ -173,6 +177,7 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 	}
 
+	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
 }
 
