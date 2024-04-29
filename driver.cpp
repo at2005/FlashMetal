@@ -111,7 +111,8 @@ std::vector<torch::Tensor> FlashMPSDispatch(torch::Tensor& query, torch::Tensor&
 	});
 
 	torch::mps::synchronize();
-		
+
+	pipeline->release();	
 	dev->release();
 
 	return {out, row_max, row_sum};
