@@ -25,7 +25,12 @@ s_masked = torch.where(mask == 1, s, torch.tensor(float('-inf')).to("mps"))
 P = F.softmax(s_masked, -1)
 
 o_test = (torch.matmul(P, v))
-print(o_test)
+loss = torch.mean(o_test)
+loss.backward()
+print(q.grad)
+q.grad = torch.zeros_like(q.grad)
+
+#print(o_test)
 
 #dO = torch.randn_like(q, device='mps')
 #o1 = (s_masked @ v)
@@ -63,14 +68,14 @@ class FlashAttentionAutograd(torch.autograd.Function):
 
 
 out = FlashAttentionAutograd.apply(q,k,v)
-print(out)
+#print(out)
 #diff = out - o_test
 
 #print(diff)
 
 loss = torch.mean(out)
 loss.backward()
-#print(q.grad)
+print(q.grad)
 
 class MHAttention(nn.Module):
     def __init__(self):
