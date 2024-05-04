@@ -141,8 +141,8 @@ std::vector<torch::Tensor> FlashBackDispatch(torch::Tensor& query, torch::Tensor
 
 
 	// split into 16 blocks of size 4 each
-	unsigned int Q_BLOCK_SIZE = 8; 
-	unsigned int K_BLOCK_SIZE = 8;
+	unsigned int Q_BLOCK_SIZE = 32; 
+	unsigned int K_BLOCK_SIZE = 32;
 	
 
 	// NEED THIS

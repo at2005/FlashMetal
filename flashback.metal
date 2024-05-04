@@ -7,9 +7,9 @@ kernel void backprop_attention(const device float* query[[buffer(0)]], const dev
 device float* out [[buffer(3)]], device float* dO [[buffer(4)]], device float* out_dQ [[buffer(5)]], device float* out_dK [[buffer(6)]], device float* out_dV [[buffer(7)]], device float* ROW_SUMS [[buffer(8)]], device float* ROW_MAX_VALS [[buffer(9)]], uint2 gid [[thread_position_in_grid]], uint2 tid [[thread_position_in_threadgroup]], uint2 tgid [[threadgroup_position_in_grid]]) {
 	
 	
-	const unsigned int query_size = 8;
-	const unsigned int key_size = 8;
-	const unsigned int embed_dim = 96;
+	const unsigned int query_size = 32;
+	const unsigned int key_size = 32;
+	const unsigned int embed_dim = 8;
 	const unsigned int seq_len = 1024;
 	const unsigned int num_keys = seq_len / key_size;
 	const unsigned int num_heads = 8;
