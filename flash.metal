@@ -87,7 +87,9 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 		for(unsigned int i = 0; i < query_size; i++) {
 			// inner loop is each row in K-block. Should be column but it's transposed
 			for(unsigned int j = 0; j < key_size; j++) {
-
+				if(tid.y * query_size + i < (k * key_size + j)) {
+					continue;
+				}
 				// compute dot product
 				float total_dot = 0.0;
 				for(unsigned int el = 0; el < embed_dim; el++) { 
@@ -108,7 +110,7 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 		}
 
-	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+//	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 			
 		float ROW_SUM_NEW[query_size];
 		// calculating row_sums and exponentiating with maximum
@@ -131,18 +133,20 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 		}
 		
 		
-	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+//	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 		// computing value dot attention scores
 		// so, basically, iterate over each row in attention scores, for us that is reduced seq dimension
 		for(unsigned int att_row = 0; att_row < query_size; att_row++) {
 			
 			float rowmax_new = metal::max(ROW_MAX[att_row], ROW_MAX_LOCAL[att_row]);
 			float sum_divisor = ((metal::exp(ROW_MAX[att_row] - rowmax_new) * ROW_SUM[att_row]) + (metal::exp(ROW_MAX_LOCAL[att_row] - rowmax_new) * ROW_SUM_NEW[att_row]));
+			
+			const unsigned int att_row_idx = att_row * embed_dim;
 
 			// iterate over each column in value matrix
 			for(unsigned int val_col = 0; val_col < embed_dim; val_col++) {
 
-				size_t outmat_i = batch_plus_head_index + (embed_dim * tid.y * query_size) + (att_row*embed_dim) + val_col;
+				size_t outmat_i = batch_plus_head_index + (query_elements * tid.y) + att_row_idx + val_col;
 
 				float val_dot = 0.0;
 				// dot prod computation
@@ -176,7 +180,7 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 	}
 	
 		
-	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+//	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 	const unsigned int num_values_batch_row = seq_len * num_heads;
 	const unsigned int row_value_cp_idx = (tgid.y*num_values_batch_row) + (tgid.x*seq_len) + (tid.y * query_size); 
 	for(unsigned int i = 0; i < query_size; i++) {
@@ -185,7 +189,7 @@ device float* out [[buffer(3)]], device float* ROW_MAX_GLOBAL [[buffer(4)]], dev
 
 	}
 
-	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+//	threadgroup_barrier(metal::mem_flags::mem_threadgroup);
 
 }
 
